@@ -4,6 +4,28 @@
 
 普通入口为站点根路径（对应 `/#/pay`）：多个停车场启用时先显示选择页；选择后使用 `/#/pay?parkingLotId=<停车场ID>`，可在缴费页切换停车场。后台生成的专属二维码使用 `/#/pay/<停车场ID>`，扫码后固定停车场，不提供换场入口。两种入口都以服务端校验的停车场与价格下单，不能靠修改页面金额或回跳地址切换订单归属。
 
+## 界面预览
+
+以下截图使用本地模拟支付和虚构停车场、车辆信息，仅用于展示手机端界面。
+
+用户端：
+
+| 选择停车场 | 填写缴费信息 |
+| --- | --- |
+| <img src="docs/screenshots/parking-selector.png" alt="停车场选择页" width="280"> | <img src="docs/screenshots/payment-form.png" alt="停车缴费表单" width="280"> |
+| 我的缴费记录 | 缴费结果与凭证 |
+| <img src="docs/screenshots/payment-history.png" alt="个人缴费记录" width="280"> | <img src="docs/screenshots/payment-result.png" alt="缴费结果与凭证" width="280"> |
+
+管理端：
+
+| 管理员登录 | 经营概览 |
+| --- | --- |
+| <img src="docs/screenshots/admin-login.png" alt="管理员登录页" width="280"> | <img src="docs/screenshots/admin-overview.png" alt="经营概览与年份切换" width="280"> |
+| 缴费标准 | 缴费记录与筛选 |
+| <img src="docs/screenshots/admin-prices.png" alt="按停车场设置缴费标准" width="280"> | <img src="docs/screenshots/admin-orders.png" alt="管理端缴费记录与筛选" width="280"> |
+| 停车场管理 | 专属缴费二维码 |
+| <img src="docs/screenshots/admin-parking-lots.png" alt="停车场管理页" width="280"> | <img src="docs/screenshots/admin-parking-qr.png" alt="停车场专属缴费二维码" width="280"> |
+
 ## 功能
 
 用户端：
