@@ -1,0 +1,11 @@
+[Unit]
+Description=每日备份 ParkFee SQLite 数据库
+
+[Timer]
+OnCalendar=*-*-* 02:17:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=parkfee-backup.service
+
+[Install]
+WantedBy=timers.target

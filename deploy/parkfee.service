@@ -1,0 +1,56 @@
+[Unit]
+Description=停车费缴费应用
+Documentation=file:///opt/parkfee/current/README.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=parkfee
+Group=parkfee
+WorkingDirectory=/opt/parkfee/current
+EnvironmentFile=/etc/parkfee/parkfee.env
+ExecStart=/usr/bin/node dist/server/index.js
+
+Restart=on-failure
+RestartSec=3s
+TimeoutStartSec=30s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+UMask=0027
+
+# 应用代码和系统目录只读，仅允许写数据库与运行日志目录。
+StateDirectory=parkfee
+StateDirectoryMode=0750
+LogsDirectory=parkfee
+LogsDirectoryMode=0750
+ReadWritePaths=/var/lib/parkfee /var/log/parkfee
+
+# 基础沙箱加固；保留 AF_INET/AF_INET6 以访问微信 API。
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=parkfee
+
+[Install]
+WantedBy=multi-user.target

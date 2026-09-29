@@ -1,0 +1,11 @@
+[Unit]
+Description=每日执行停车缴费数据库备份
+
+[Timer]
+OnCalendar=*-*-* 02:17:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=parkfee-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=停车缴费 SQLite 一致性备份
+After=local-fs.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/parkfee/backup.env
+ExecStart=/usr/local/sbin/parkfee-backup
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/parkfee

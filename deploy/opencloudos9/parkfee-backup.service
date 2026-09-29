@@ -1,0 +1,14 @@
+[Unit]
+Description=ParkFee SQLite 一致性备份
+After=local-fs.target
+ConditionPathExists=/data/parkfee/shared/data/parking.db
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env ENV_FILE=/data/parkfee/config/parkfee.env BACKUP_DIR=/data/parkfee/backups /usr/bin/bash /data/parkfee/current/deploy/backup.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/parkfee/backups

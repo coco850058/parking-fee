@@ -1,0 +1,11 @@
+[Unit]
+Description=定期检查 pay.example.com 的 HTTPS 证书
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+Persistent=true
+RandomizedDelaySec=1h
+Unit=parkfee-cert-renew.service
+
+[Install]
+WantedBy=timers.target

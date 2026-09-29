@@ -1,0 +1,33 @@
+[Unit]
+Description=ParkFee 停车费缴费服务
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=parkfee
+Group=parkfee
+WorkingDirectory=/data/parkfee/current
+EnvironmentFile=/data/parkfee/config/wechat.env
+EnvironmentFile=/data/parkfee/config/parkfee.env
+# 公网服务始终使用真实支付，并且只监听本机 3100 端口。
+ExecStart=/usr/bin/env NODE_ENV=production PAYMENT_MODE=wechat HOST=127.0.0.1 PORT=3100 /usr/local/bin/node dist/server/index.js
+Restart=on-failure
+RestartSec=3s
+# 退款对账一轮最多 10 笔、单笔请求可能耗时 10 秒；留足时间等待查单完成。
+TimeoutStopSec=120s
+KillSignal=SIGTERM
+UMask=0027
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/parkfee/shared/data
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

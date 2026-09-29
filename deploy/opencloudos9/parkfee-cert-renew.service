@@ -1,0 +1,8 @@
+[Unit]
+Description=续期 pay.example.com 的 HTTPS 证书
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/certbot renew --cert-name pay.example.com --quiet --deploy-hook "/usr/bin/systemctl reload nginx"
