@@ -53,7 +53,10 @@ import {
   orderStatuses,
   platePrefixSchema,
   updatePricesSchema,
+  type CustomerType,
   type OrderRecord,
+  type OrderStatus,
+  type RefundStatus,
 } from './domain.js'
 import { AppError, sendError } from './errors.js'
 import { parseCalendarDate, shanghaiDateParts, shanghaiDayStartIso } from './dates.js'
@@ -437,27 +440,55 @@ function csvCell(value: string | number | null): string {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
+const csvOrderStatusText: Record<OrderStatus, string> = {
+  pending: '待支付',
+  paid: '已支付',
+  closed: '已关闭',
+  refunded: '已退款',
+}
+
+const csvCustomerTypeText: Record<CustomerType, string> = {
+  merchant: '商户租户',
+  resident: '居民',
+}
+
+const csvRefundStatusText: Record<RefundStatus, string> = {
+  requesting: '退款请求中',
+  processing: '退款处理中',
+  success: '退款成功',
+  closed: '退款已关闭',
+  abnormal: '退款异常',
+}
+
+function centsToYuan(cents: number): string {
+  return (cents / 100).toFixed(2)
+}
+
 function ordersCsv(orders: OrderRecord[]): string {
   const rows: Array<Array<string | number | null>> = [
-    ['订单号', '停车场', '状态', '用户类型', '姓名', '电话', '门牌号码', '车牌号', '时长（月）', '金额（分）', '创建时间', '支付时间', '微信交易号', '退款状态', '退款金额（分）', '退款成功时间'],
-    ...orders.map((order) => [
-      order.orderNo,
-      order.parkingLotName,
-      order.status,
-      order.customerType,
-      order.contactName,
-      order.contactPhone ? `'${order.contactPhone}` : null,
-      order.address,
-      order.plateNumber,
-      order.durationMonths,
-      order.amount,
-      order.createdAt,
-      order.paidAt,
-      order.transactionId,
-      order.refund?.status ?? null,
-      order.refund?.amount ?? null,
-      order.refund?.successAt ?? null,
-    ]),
+    ['订单号', '停车场', '状态', '用户类型', '姓名', '手机号', '固定电话', '门牌号码', '车牌号', '时长（月）', '金额（元）', '创建时间', '支付时间', '微信交易号', '退款状态', '退款金额（元）', '退款成功时间'],
+    ...orders.map((order) => {
+      const isMobile = order.contactPhone !== null && /^1[3-9]\d{9}$/.test(order.contactPhone)
+      return [
+        order.orderNo,
+        order.parkingLotName,
+        csvOrderStatusText[order.status],
+        csvCustomerTypeText[order.customerType],
+        order.contactName,
+        isMobile ? `'${order.contactPhone}` : null,
+        order.contactPhone && !isMobile ? `'${order.contactPhone}` : null,
+        order.address,
+        order.plateNumber,
+        order.durationMonths,
+        centsToYuan(order.amount),
+        order.createdAt,
+        order.paidAt,
+        order.transactionId,
+        order.refund ? csvRefundStatusText[order.refund.status] : null,
+        order.refund ? centsToYuan(order.refund.amount) : null,
+        order.refund?.successAt ?? null,
+      ]
+    }),
   ]
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`
 }

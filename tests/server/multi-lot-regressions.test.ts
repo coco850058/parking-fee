@@ -80,7 +80,7 @@ function orderPayload(parkingLotId: string, priceVersion: number, expectedAmount
 }
 
 describe('多停车场上线回归', () => {
-  it('将已有价格版本、订单及退款记录归入首场，重复启动不改历史数据', () => {
+  it('将已有价格版本、订单及退款记录归入首场，重复启动不改历史数据', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'park-fee-lot-migration-'))
     const databasePath = join(directory, 'parking.db')
     try {
@@ -197,6 +197,22 @@ describe('多停车场上线回归', () => {
         } finally {
           db.close()
         }
+      }
+      const app = await createApp({ env: testEnv, databasePath, serveStatic: false })
+      try {
+        const cookie = await adminCookie(app)
+        const exported = await app.inject({
+          method: 'GET', url: '/api/admin/orders/export.csv?keyword=PF-LEGACY-1', headers: { cookie },
+        })
+        expect(exported.statusCode).toBe(200)
+        expect(exported.body).toContain('姓名,手机号,固定电话')
+        const row = exported.body.split('\r\n').find((line) => line.startsWith('PF-LEGACY-1,'))
+        expect(row?.split(',').slice(0, 11)).toEqual([
+          'PF-LEGACY-1', INITIAL_PARKING_LOT_NAME, '已支付', '居民', '', '', '',
+          '原地址', '新A12345', '1', '1.00',
+        ])
+      } finally {
+        await app.close()
       }
     } finally {
       rmSync(directory, { recursive: true, force: true })

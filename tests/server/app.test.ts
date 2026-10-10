@@ -21,6 +21,39 @@ function cookieFrom(response: { headers: Record<string, string | string[] | unde
   return value.split(';', 1)[0]
 }
 
+function csvRecords(csv: string): Array<Record<string, string>> {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  const source = csv.replace(/^\uFEFF/, '')
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]
+    if (character === '"') {
+      if (quoted && source[index + 1] === '"') {
+        cell += '"'
+        index += 1
+      } else {
+        quoted = !quoted
+      }
+    } else if (character === ',' && !quoted) {
+      row.push(cell)
+      cell = ''
+    } else if ((character === '\r' || character === '\n') && !quoted) {
+      if (character === '\r' && source[index + 1] === '\n') index += 1
+      row.push(cell)
+      rows.push(row)
+      row = []
+      cell = ''
+    } else {
+      cell += character
+    }
+  }
+  if (row.length > 0 || cell) rows.push([...row, cell])
+  const [headers, ...values] = rows
+  return values.map((fields) => Object.fromEntries(headers.map((header, index) => [header, fields[index] ?? ''])))
+}
+
 async function adminCookie(app: FastifyInstance): Promise<string> {
   const response = await app.inject({
     method: 'POST',
@@ -315,7 +348,19 @@ describe('停车缴费后端', () => {
     expect(exported.body).toContain('苏A88888')
     expect(exported.body).toContain('幸福小区6栋')
     expect(exported.body).toContain('门牌号码')
-    expect(exported.body).toContain("'13800138000")
+    expect(exported.body).toContain('金额（元）')
+    expect(exported.body).toContain('退款金额（元）')
+    expect(exported.body).not.toContain('金额（分）')
+    const [exportedOrder] = csvRecords(exported.body)
+    expect(exportedOrder).toMatchObject({
+      状态: '已支付',
+      用户类型: '居民',
+      姓名: '测试用户',
+      手机号: "'13800138000",
+      固定电话: '',
+      '金额（元）': '420.00',
+      '退款金额（元）': '',
+    })
     expect(exported.headers['cache-control']).toBe('no-store')
   })
 
@@ -344,9 +389,61 @@ describe('停车缴费后端', () => {
       expect(csv.body).not.toContain('粤B10002')
       expect(csv.body).toContain("'01012345678")
       expect(csv.body).toContain("'+7")
+      expect(csvRecords(csv.body)[0]).toMatchObject({
+        用户类型: '商户租户', 姓名: '张三', 手机号: '', 固定电话: "'01012345678",
+      })
     }
     const unauthorized = await app.inject({ method: 'GET', url: '/api/admin/orders/export.csv' })
     expect(unauthorized.statusCode).toBe(401)
+  })
+
+  it('导出金额和全额退款金额均按元保留两位小数', async () => {
+    const cookie = await adminCookie(app)
+    const prices = body<{ data: { items: Array<{ customerType: string; durationMonths: number; amount: number }> } }>(
+      await app.inject({ method: 'GET', url: '/api/public/prices' }),
+    ).data
+    const updated = await app.inject({
+      method: 'PUT', url: '/api/admin/prices', headers: { cookie },
+      payload: {
+        items: prices.items.map((item) => ({
+          ...item,
+          amount: item.durationMonths === 1 && item.customerType === 'merchant' ? 1
+            : item.durationMonths === 1 && item.customerType === 'resident' ? 12_345 : item.amount,
+        })),
+      },
+    })
+    expect(updated.statusCode).toBe(200)
+    const refundedOrder = await app.inject({
+      method: 'POST', url: '/api/public/orders',
+      payload: orderPayload({ priceVersion: 2, expectedAmount: 1, plateNumber: '粤B20001' }),
+    })
+    const refundedId = body<{ data: { id: string } }>(refundedOrder).data.id
+    expect(refundedOrder.statusCode).toBe(201)
+    await app.inject({ method: 'POST', url: `/api/public/orders/${refundedId}/mock-pay` })
+    const refund = await app.inject({
+      method: 'POST', url: `/api/admin/orders/${refundedId}/refund`,
+      headers: { cookie, 'x-parkfee-admin-action': 'refund' },
+    })
+    expect(refund.statusCode).toBe(200)
+    const pendingOrder = await app.inject({
+      method: 'POST', url: '/api/public/orders',
+      payload: orderPayload({
+        priceVersion: 2, expectedAmount: 12_345, customerType: 'resident', plateNumber: '粤B20002',
+      }),
+    })
+    expect(pendingOrder.statusCode).toBe(201)
+
+    const exported = await app.inject({ method: 'GET', url: '/api/admin/orders/export.csv', headers: { cookie } })
+    expect(exported.statusCode).toBe(200)
+    const records = csvRecords(exported.body)
+    expect(records.find((record) => record.车牌号 === '粤B20001')).toMatchObject({
+      状态: '已退款', 用户类型: '商户租户', '金额（元）': '0.01',
+      退款状态: '退款成功', '退款金额（元）': '0.01',
+    })
+    expect(records.find((record) => record.车牌号 === '粤B20002')).toMatchObject({
+      状态: '待支付', 用户类型: '居民', '金额（元）': '123.45',
+      退款状态: '', '退款金额（元）': '',
+    })
   })
 
   it('个人历史仅展示真正缴费记录，管理员全额退款需认证和确认头且重复操作不重复退款', async () => {
