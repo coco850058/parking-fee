@@ -108,6 +108,8 @@ export const publicApi = {
     priceVersion: number;
     expectedAmount: number;
     customerType: string;
+    contactName: string;
+    contactPhone: string;
     address: string;
     plateNumber: string;
     durationMonths: number;

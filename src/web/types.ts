@@ -63,6 +63,8 @@ export interface Order {
   amount: number;
   priceVersion: number | string;
   customerType: CustomerType;
+  contactName: string | null;
+  contactPhone: string | null;
   address: string;
   plateNumber: string;
   durationMonths: DurationMonths;

@@ -53,7 +53,8 @@ describe('管理端期间汇总与日期筛选', () => {
         method: 'POST', url: '/api/public/orders',
         payload: {
           clientRequestId: randomUUID(), priceVersion: 1, expectedAmount: 10_000,
-          customerType: 'merchant', address: '期间测试', plateNumber, durationMonths: 1,
+          customerType: 'merchant', contactName: '测试用户', contactPhone: '13800138000',
+          address: '期间测试', plateNumber, durationMonths: 1,
         },
       })
       expect(created.statusCode).toBe(201)
@@ -133,7 +134,8 @@ describe('管理端期间汇总与日期筛选', () => {
         method: 'POST', url: '/api/public/orders',
         payload: {
           clientRequestId: randomUUID(), priceVersion: 1, expectedAmount: 10_000,
-          customerType: 'merchant', address: '闰日测试', plateNumber: plate, durationMonths: 1,
+          customerType: 'merchant', contactName: '测试用户', contactPhone: '13800138000',
+          address: '闰日测试', plateNumber: plate, durationMonths: 1,
         },
       })
       expect(response.statusCode).toBe(201)

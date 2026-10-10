@@ -74,7 +74,8 @@ async function createActiveSecondLot(app: FastifyInstance, cookie: string): Prom
 function orderPayload(parkingLotId: string, priceVersion: number, expectedAmount: number, plateNumber: string) {
   return {
     parkingLotId, priceVersion, expectedAmount, plateNumber,
-    clientRequestId: randomUUID(), customerType: 'merchant', address: '测试地址', durationMonths: 1,
+    clientRequestId: randomUUID(), customerType: 'merchant', contactName: '测试用户',
+    contactPhone: '13800138000', address: '测试地址', durationMonths: 1,
   }
 }
 
@@ -177,7 +178,7 @@ describe('多停车场上线回归', () => {
       for (let startup = 0; startup < 2; startup += 1) {
         const db = openDatabase(config)
         try {
-          expect(db.pragma('user_version', { simple: true })).toBe(8)
+          expect(db.pragma('user_version', { simple: true })).toBe(9)
           expect(db.prepare('SELECT COUNT(*) AS n FROM parking_lots').get()).toEqual({ n: 1 })
           expect(db.prepare('SELECT plate_prefix FROM parking_lots WHERE id = ?').get(INITIAL_PARKING_LOT_ID))
             .toEqual({ plate_prefix: '新A' })
@@ -191,6 +192,7 @@ describe('多停车场上线回归', () => {
           expect(getCurrentPrices(db, INITIAL_PARKING_LOT_ID).version).toBe(2)
           expect(getCurrentPrices(db, INITIAL_PARKING_LOT_ID).items[0].amount).toBe(200)
           expect(getOrderById(db, 'legacy-1')).toMatchObject({ status: 'paid', amount: 100, parkingLotId: INITIAL_PARKING_LOT_ID })
+          expect(getOrderById(db, 'legacy-1')).toMatchObject({ contactName: null, contactPhone: null, address: '原地址' })
           expect(getOrderById(db, 'legacy-2')).toMatchObject({ status: 'refunded', amount: 200, refund: { status: 'success', amount: 200 } })
         } finally {
           db.close()

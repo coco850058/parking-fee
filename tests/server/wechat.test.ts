@@ -162,9 +162,13 @@ describe('微信支付回调校验', () => {
     const order: OrderRecord = {
       id: '40296c77-4bc8-4f74-a2ac-a04a214979e9',
       orderNo: 'PF202609220001',
+      parkingLotId: '00000000-0000-4000-8000-000000000001',
+      parkingLotName: '测试停车场',
       clientRequestId: '4c5e34db-e048-4eb4-b7c1-fb5a5c2d4183',
       openid: 'wx-openid-1',
       customerType: 'resident',
+      contactName: '测试用户',
+      contactPhone: '13800138000',
       address: '幸福小区6栋',
       plateNumber: '苏A88888',
       durationMonths: 1,
@@ -185,6 +189,8 @@ describe('微信支付回调校验', () => {
     expect(requests[0]?.acceptLanguage).toBe('zh-CN')
     const createPayload = JSON.parse(requests[0]?.body ?? '{}') as Record<string, unknown>
     expect(createPayload.time_expire).toBe(order.expiresAt)
+    expect(JSON.stringify(createPayload)).not.toContain(order.contactName)
+    expect(JSON.stringify(createPayload)).not.toContain(order.contactPhone)
 
     await client.closeOrder(order.orderNo)
     expect(requests[1]).toMatchObject({

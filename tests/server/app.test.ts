@@ -37,6 +37,8 @@ function orderPayload(
     priceVersion: number
     expectedAmount: number
     customerType: 'merchant' | 'resident'
+    contactName: string
+    contactPhone: string
     address: string
     plateNumber: string
     durationMonths: 1 | 3 | 6 | 12
@@ -47,6 +49,8 @@ function orderPayload(
     priceVersion: 1,
     expectedAmount: 10_000,
     customerType: 'merchant' as const,
+    contactName: '测试用户',
+    contactPhone: '13800138000',
     address: '一号楼101室',
     plateNumber: '粤B12345',
     durationMonths: 1 as const,
@@ -107,6 +111,48 @@ describe('停车缴费后端', () => {
       payload: orderPayload({ plateNumber: '新A123456' }),
     })
     expect(invalid.statusCode).toBe(400)
+  })
+
+  it('新订单必填姓名、电话与门牌号码，并归一化手机号和固定电话', async () => {
+    for (const [field, value] of [
+      ['contactName', ''],
+      ['contactName', '甲'.repeat(41)],
+      ['contactPhone', ''],
+      ['contactPhone', '12345'],
+      ['address', ''],
+      ['address', '1'.repeat(121)],
+    ] as const) {
+      const response = await app.inject({
+        method: 'POST', url: '/api/public/orders',
+        payload: orderPayload({ [field]: value }),
+      })
+      expect(response.statusCode).toBe(400)
+      expect(body<{ error: { code: string } }>(response).error.code).toBe('VALIDATION_ERROR')
+    }
+    const { contactName: _omittedName, ...withoutName } = orderPayload()
+    const missing = await app.inject({ method: 'POST', url: '/api/public/orders', payload: withoutName })
+    expect(missing.statusCode).toBe(400)
+    expect(body<{ error: { message: string } }>(missing).error.message).toContain('请填写姓名')
+    const { contactPhone: _omittedPhone, ...withoutPhone } = orderPayload()
+    const missingPhone = await app.inject({ method: 'POST', url: '/api/public/orders', payload: withoutPhone })
+    expect(missingPhone.statusCode).toBe(400)
+    expect(body<{ error: { message: string } }>(missingPhone).error.message).toContain('请填写电话')
+
+    const mobile = await app.inject({
+      method: 'POST', url: '/api/public/orders',
+      payload: orderPayload({ contactName: '  张三  ', contactPhone: '138 0013-8000', address: '  1  ' }),
+    })
+    expect(mobile.statusCode).toBe(201)
+    expect(body<{ data: { contactName: string; contactPhone: string; address: string } }>(mobile).data)
+      .toMatchObject({ contactName: '张三', contactPhone: '13800138000', address: '1' })
+    expect(mobile.headers['cache-control']).toBe('no-store')
+
+    const landline = await app.inject({
+      method: 'POST', url: '/api/public/orders',
+      payload: orderPayload({ contactPhone: '010-1234 5678' }),
+    })
+    expect(landline.statusCode).toBe(201)
+    expect(body<{ data: { contactPhone: string } }>(landline).data.contactPhone).toBe('01012345678')
   })
 
   it('生产环境首次初始化为零价格并禁止创建支付订单', async () => {
@@ -268,6 +314,39 @@ describe('停车缴费后端', () => {
     expect(exported.headers['content-type']).toContain('text/csv')
     expect(exported.body).toContain('苏A88888')
     expect(exported.body).toContain('幸福小区6栋')
+    expect(exported.body).toContain('门牌号码')
+    expect(exported.body).toContain("'13800138000")
+    expect(exported.headers['cache-control']).toBe('no-store')
+  })
+
+  it('后台按姓名、电话与门牌号码搜索，列表和 CSV 使用相同条件且导出防公式注入', async () => {
+    const first = await app.inject({
+      method: 'POST', url: '/api/public/orders',
+      payload: orderPayload({ contactName: '张三', contactPhone: '010-12345678', address: '+7', plateNumber: '粤B10001' }),
+    })
+    const second = await app.inject({
+      method: 'POST', url: '/api/public/orders',
+      payload: orderPayload({ contactName: '李四', contactPhone: '13800138000', address: '2栋', plateNumber: '粤B10002' }),
+    })
+    expect(first.statusCode).toBe(201)
+    expect(second.statusCode).toBe(201)
+    const cookie = await adminCookie(app)
+    for (const keyword of ['张三', '01012345678', '+7']) {
+      const query = `keyword=${encodeURIComponent(keyword)}`
+      const list = await app.inject({ method: 'GET', url: `/api/admin/orders?${query}`, headers: { cookie } })
+      expect(list.statusCode).toBe(200)
+      expect(list.headers['cache-control']).toBe('no-store')
+      expect(body<{ data: { total: number; items: Array<{ plateNumber: string }> } }>(list).data)
+        .toMatchObject({ total: 1, items: [{ plateNumber: '粤B10001' }] })
+      const csv = await app.inject({ method: 'GET', url: `/api/admin/orders/export.csv?${query}`, headers: { cookie } })
+      expect(csv.statusCode).toBe(200)
+      expect(csv.body).toContain('粤B10001')
+      expect(csv.body).not.toContain('粤B10002')
+      expect(csv.body).toContain("'01012345678")
+      expect(csv.body).toContain("'+7")
+    }
+    const unauthorized = await app.inject({ method: 'GET', url: '/api/admin/orders/export.csv' })
+    expect(unauthorized.statusCode).toBe(401)
   })
 
   it('个人历史仅展示真正缴费记录，管理员全额退款需认证和确认头且重复操作不重复退款', async () => {
@@ -343,13 +422,17 @@ describe('停车缴费后端', () => {
     expect(replayedOrder).not.toHaveProperty('openid')
     expect(replayedOrder).not.toHaveProperty('clientRequestId')
 
-    const conflict = await app.inject({
-      method: 'POST',
-      url: '/api/public/orders',
-      payload: { ...payload, address: '另一处地址' },
-    })
-    expect(conflict.statusCode).toBe(409)
-    expect(body<{ error: { code: string } }>(conflict).error.code).toBe('IDEMPOTENCY_CONFLICT')
+    for (const changes of [
+      { address: '另一处门牌' },
+      { contactName: '另一个人' },
+      { contactPhone: '01012345678' },
+    ]) {
+      const conflict = await app.inject({
+        method: 'POST', url: '/api/public/orders', payload: { ...payload, ...changes },
+      })
+      expect(conflict.statusCode).toBe(409)
+      expect(body<{ error: { code: string } }>(conflict).error.code).toBe('IDEMPOTENCY_CONFLICT')
+    }
 
     const cookie = await adminCookie(app)
     const orders = await app.inject({

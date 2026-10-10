@@ -100,7 +100,7 @@
         <section class="surface-card form-section details-section">
           <div class="section-head compact">
             <div>
-              <h2 class="section-title">车辆信息</h2>
+              <h2 class="section-title">缴费信息</h2>
               <p class="section-subtitle">用于核对缴费记录，请准确填写</p>
             </div>
             <button v-if="hasRecent" type="button" class="recent-button" @click="restoreRecent">
@@ -109,16 +109,44 @@
           </div>
           <van-cell-group :border="false" inset class="field-group">
             <van-field
+              v-model.trim="form.contactName"
+              name="contactName"
+              label="姓名"
+              placeholder="请输入缴费人姓名"
+              maxlength="40"
+              clearable
+              autocomplete="name"
+              :rules="[
+                { required: true, message: '请填写姓名' },
+                { validator: validateContactName, message: '姓名不能超过 40 个字符' },
+              ]"
+            />
+            <van-field
+              v-model.trim="form.contactPhone"
+              name="contactPhone"
+              label="电话"
+              type="tel"
+              inputmode="tel"
+              placeholder="手机号或固定电话"
+              maxlength="22"
+              clearable
+              autocomplete="tel"
+              :rules="[
+                { required: true, message: '请填写电话' },
+                { validator: validateContactPhone, message: '请输入正确的手机号或固定电话' },
+              ]"
+            />
+            <van-field
               v-model.trim="form.address"
               name="address"
-              label="地址"
-              placeholder="例：幸福里 2 栋 301 室"
-              maxlength="60"
+              label="门牌号码"
+              placeholder="例：2 栋 301 室"
+              maxlength="120"
               clearable
-              autocomplete="street-address"
+              autocomplete="address-line2"
               :rules="[
-                { required: true, message: '请填写地址' },
-                { validator: validateAddress, message: '地址至少填写2个字符' },
+                { required: true, message: '请填写门牌号码' },
+                { validator: validateAddress, message: '门牌号码不能超过 120 个字符' },
               ]"
             />
             <div ref="plateFieldRef" class="plate-field-wrap">
@@ -236,6 +264,8 @@ const durations: DurationMonths[] = [1, 3, 6, 12];
 
 const form = reactive({
   customerType: 'resident' as CustomerType,
+  contactName: '',
+  contactPhone: '',
   address: '',
   plateNumber: '',
   durationMonths: 1 as DurationMonths,
@@ -318,7 +348,7 @@ function restoreRecent() {
   ) {
     form.durationMonths = recent.value.durationMonths as DurationMonths;
   }
-  showToast('已填入最近信息');
+  showToast('已填入最近车辆信息，请填写姓名和电话');
 }
 
 function saveRecent() {
@@ -336,7 +366,13 @@ function saveRecent() {
   }
 }
 
-const validateAddress = (value: string) => value.trim().length >= 2;
+const validateContactName = (value: string) => value.trim().length >= 1 && value.trim().length <= 40;
+const normalizeContactPhone = (value: string) => value.trim().replace(/[\s-]/g, '');
+const validateContactPhone = (value: string) => {
+  const normalized = normalizeContactPhone(value);
+  return /^1[3-9]\d{9}$/.test(normalized) || /^0\d{2,3}\d{7,8}$/.test(normalized);
+};
+const validateAddress = (value: string) => value.trim().length >= 1 && value.trim().length <= 120;
 watch(() => form.plateNumber, (value) => {
   if (isValidPlate(value) && Array.from(normalizePlate(value)).length === (newEnergy.value ? 8 : 7)) {
     plateError.value = '';
@@ -543,6 +579,8 @@ async function submitOrder() {
       priceVersion,
       expectedAmount: currentAmount.value,
       customerType: form.customerType,
+      contactName: form.contactName.trim(),
+      contactPhone: normalizeContactPhone(form.contactPhone),
       address: form.address.trim(),
       plateNumber: form.plateNumber,
       durationMonths: form.durationMonths,
@@ -557,6 +595,8 @@ async function submitOrder() {
       priceVersion,
       expectedAmount: currentAmount.value,
       customerType: form.customerType,
+      contactName: form.contactName.trim(),
+      contactPhone: normalizeContactPhone(form.contactPhone),
       address: form.address.trim(),
       plateNumber: form.plateNumber,
       durationMonths: form.durationMonths,
@@ -616,6 +656,8 @@ onMounted(() => {
 watch([() => route.params.parkingLotId, () => route.query.parkingLotId], () => {
   // 场地变更时不能沿用上一停车场填写的车辆信息或下单幂等请求号。
   form.customerType = 'resident';
+  form.contactName = '';
+  form.contactPhone = '';
   form.address = '';
   form.plateNumber = '';
   formParkingLotId = '';

@@ -60,6 +60,14 @@ export const plateNumberSchema = z
   .transform(normalizePlateNumber)
   .refine(isValidPlateNumber, '请输入有效的 7 位普通车牌或 8 位新能源车牌')
 
+const contactPhonePattern = /^(?:1[3-9]\d{9}|0\d{2,3}\d{7,8})$/
+
+export const contactPhoneSchema = z
+  .string({ error: '请填写电话，如页面未显示该项请刷新后重试' })
+  .trim()
+  .transform((value) => value.replace(/[\s-]/g, ''))
+  .refine((value) => contactPhonePattern.test(value), '请输入有效的中国大陆手机号或固定电话')
+
 export const createOrderSchema = z.object({
   parkingLotId: z.string().uuid('停车场编号格式不正确').optional(),
   clientRequestId: z.string().uuid('请求标识格式不正确'),
@@ -70,7 +78,10 @@ export const createOrderSchema = z.object({
     .min(0, '预期金额不能小于0')
     .max(10_000_000, '预期金额过大'),
   customerType: customerTypeSchema,
-  address: z.string().trim().min(2, '请填写地址').max(120, '地址不能超过120个字符'),
+  contactName: z.string({ error: '请填写姓名，如页面未显示该项请刷新后重试' })
+    .trim().min(1, '请填写姓名').max(40, '姓名不能超过40个字符'),
+  contactPhone: contactPhoneSchema,
+  address: z.string().trim().min(1, '请填写门牌号码').max(120, '门牌号码不能超过120个字符'),
   plateNumber: plateNumberSchema,
   durationMonths: durationSchema,
 })
@@ -110,6 +121,8 @@ export interface OrderRecord {
   clientRequestId: string
   openid: string
   customerType: CustomerType
+  contactName: string | null
+  contactPhone: string | null
   address: string
   plateNumber: string
   durationMonths: DurationMonths

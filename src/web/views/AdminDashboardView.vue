@@ -249,7 +249,7 @@
             <van-search
               v-model="filters.keyword"
               shape="round"
-              placeholder="搜索车牌、地址或订单号"
+              placeholder="搜索车牌、地址/门牌、姓名、电话或订单号"
               maxlength="50"
               clearable
               @search="applyFilters"
@@ -346,6 +346,9 @@
               <div class="order-card-body">
                 <p><van-icon name="shop-o" /> {{ item.parkingLotName || '未知停车场' }}</p>
                 <p><van-icon name="location-o" /> {{ item.address }}</p>
+                <p v-if="item.contactName || item.contactPhone">
+                  <van-icon name="contact-o" /> {{ [item.contactName, item.contactPhone].filter(Boolean).join(' · ') }}
+                </p>
                 <p><van-icon name="clock-o" /> {{ durationText[item.durationMonths] }} · {{ formatDateTime(item.createdAt) }}</p>
               </div>
               <div class="order-card-foot">
@@ -457,7 +460,12 @@
 
           <dl class="detail-list">
             <div><dt>停车场</dt><dd>{{ selectedOrder.parkingLotName || '未知停车场' }}</dd></div>
-            <div><dt>地址</dt><dd>{{ selectedOrder.address }}</dd></div>
+            <div>
+              <dt>{{ selectedOrder.contactName || selectedOrder.contactPhone ? '门牌号码' : '地址' }}</dt>
+              <dd>{{ selectedOrder.address }}</dd>
+            </div>
+            <div v-if="selectedOrder.contactName"><dt>姓名</dt><dd>{{ selectedOrder.contactName }}</dd></div>
+            <div v-if="selectedOrder.contactPhone"><dt>电话</dt><dd>{{ selectedOrder.contactPhone }}</dd></div>
             <div><dt>创建时间</dt><dd>{{ formatDateTime(selectedOrder.createdAt) }}</dd></div>
             <div v-if="selectedOrder.paidAt"><dt>支付时间</dt><dd>{{ formatDateTime(selectedOrder.paidAt) }}</dd></div>
             <div><dt>订单号</dt><dd>{{ selectedOrder.orderNo }}</dd></div>

@@ -32,6 +32,8 @@ function orderPayload(parkingLotId: string, priceVersion: number, durationMonths
     parkingLotId,
     clientRequestId: randomUUID(),
     customerType: 'resident',
+    contactName: '测试用户',
+    contactPhone: '13800138000',
     address: '测试地址',
     plateNumber: '新A12345',
     durationMonths,

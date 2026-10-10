@@ -219,6 +219,8 @@ function assertIdempotentPayload(
   if (
     order.parkingLotId !== parkingLotId ||
     order.customerType !== input.customerType ||
+    order.contactName !== input.contactName ||
+    order.contactPhone !== input.contactPhone ||
     order.address !== input.address ||
     order.plateNumber !== input.plateNumber ||
     order.durationMonths !== input.durationMonths ||
@@ -430,19 +432,21 @@ function parseFilters(query: unknown): OrderFilters {
 
 function csvCell(value: string | number | null): string {
   let text = value === null ? '' : String(value)
-  // 防止地址、车牌等用户输入在 Excel/WPS 打开时被当作公式执行。
-  if (/^[=+\-@]/.test(text)) text = `'${text}`
+  // 防止姓名、门牌号码等用户输入在 Excel/WPS 打开时被当作公式执行。
+  if (/^\s*[=+\-@]/.test(text)) text = `'${text}`
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 function ordersCsv(orders: OrderRecord[]): string {
   const rows: Array<Array<string | number | null>> = [
-    ['订单号', '停车场', '状态', '用户类型', '地址', '车牌号', '时长（月）', '金额（分）', '创建时间', '支付时间', '微信交易号', '退款状态', '退款金额（分）', '退款成功时间'],
+    ['订单号', '停车场', '状态', '用户类型', '姓名', '电话', '门牌号码', '车牌号', '时长（月）', '金额（分）', '创建时间', '支付时间', '微信交易号', '退款状态', '退款金额（分）', '退款成功时间'],
     ...orders.map((order) => [
       order.orderNo,
       order.parkingLotName,
       order.status,
       order.customerType,
+      order.contactName,
+      order.contactPhone ? `'${order.contactPhone}` : null,
       order.address,
       order.plateNumber,
       order.durationMonths,
@@ -691,6 +695,8 @@ async function registerRoutes(context: AppContext): Promise<void> {
         clientRequestId: input.clientRequestId,
         openid,
         customerType: input.customerType,
+        contactName: input.contactName,
+        contactPhone: input.contactPhone,
         address: input.address,
         plateNumber: input.plateNumber,
         durationMonths: input.durationMonths,
@@ -1130,6 +1136,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Fastify
   await app.register(cookie)
   await app.register(jwt, { secret: config.jwtSecret })
   app.setErrorHandler(sendError)
+  app.addHook('onSend', async (request, reply, payload) => {
+    if (request.url.startsWith('/api/public/orders') || request.url.startsWith('/api/admin/orders')) {
+      void reply.header('Cache-Control', 'no-store')
+    }
+    return payload
+  })
   app.addHook('onClose', async () => {
     db.close()
   })

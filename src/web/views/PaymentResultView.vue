@@ -101,8 +101,16 @@
               <dd>{{ durationText[order.durationMonths] }}</dd>
             </div>
             <div>
-              <dt>地址</dt>
+              <dt>{{ order.contactName || order.contactPhone ? '门牌号码' : '地址' }}</dt>
               <dd>{{ order.address }}</dd>
+            </div>
+            <div v-if="order.contactName">
+              <dt>姓名</dt>
+              <dd>{{ order.contactName }}</dd>
+            </div>
+            <div v-if="order.contactPhone">
+              <dt>电话</dt>
+              <dd>{{ order.contactPhone }}</dd>
             </div>
             <div>
               <dt>创建时间</dt>

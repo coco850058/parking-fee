@@ -45,7 +45,8 @@ function priceItems(amount: number) {
 function orderPayload(parkingLotId: string | undefined, priceVersion: number, expectedAmount: number, plateNumber: string, clientRequestId = randomUUID()) {
   return {
     parkingLotId, clientRequestId, priceVersion, expectedAmount,
-    customerType: 'merchant', address: '测试地址', plateNumber, durationMonths: 1,
+    customerType: 'merchant', contactName: '测试用户', contactPhone: '13800138000',
+    address: '测试地址', plateNumber, durationMonths: 1,
   }
 }
 

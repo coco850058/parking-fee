@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '../../src/server/app.js'
 import { loadConfig } from '../../src/server/config.js'
-import { getCurrentPrices, insertOrder, openDatabase, recordPayment } from '../../src/server/database.js'
+import { getCurrentPrices, INITIAL_PARKING_LOT_ID, INITIAL_PARKING_LOT_NAME, insertOrder, openDatabase, recordPayment } from '../../src/server/database.js'
 
 const apiV3Key = '12345678901234567890123456789012'
 const merchantKeys = generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -146,9 +146,13 @@ describe('微信退款与个人缴费记录', () => {
     insertOrder(db, {
       id: orderId,
       orderNo,
+      parkingLotId: INITIAL_PARKING_LOT_ID,
+      parkingLotName: INITIAL_PARKING_LOT_NAME,
       clientRequestId: randomUUID(),
       openid: 'owner-openid',
       customerType: 'resident',
+      contactName: '测试用户',
+      contactPhone: '13800138000',
       address: '测试小区1栋',
       plateNumber: '粤B12345',
       durationMonths: 1,

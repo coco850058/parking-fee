@@ -49,6 +49,8 @@ interface OrderRow {
   client_request_id: string
   openid: string
   customer_type: CustomerType
+  contact_name: string | null
+  contact_phone: string | null
   address: string
   plate_number: string
   duration_months: DurationMonths
@@ -105,6 +107,8 @@ export interface NewOrder {
   clientRequestId: string
   openid: string
   customerType: CustomerType
+  contactName: string
+  contactPhone: string
   address: string
   plateNumber: string
   durationMonths: DurationMonths
@@ -187,6 +191,8 @@ function migrate(db: ParkingDatabase): void {
       client_request_id TEXT NOT NULL,
       openid TEXT NOT NULL,
       customer_type TEXT NOT NULL CHECK (customer_type IN ('merchant', 'resident')),
+      contact_name TEXT,
+      contact_phone TEXT,
       address TEXT NOT NULL,
       plate_number TEXT NOT NULL,
       duration_months INTEGER NOT NULL CHECK (duration_months IN (1, 3, 6, 12)),
@@ -277,6 +283,12 @@ function migrate(db: ParkingDatabase): void {
   if (!names.has('parking_lot_name_snapshot')) {
     db.exec('ALTER TABLE orders ADD COLUMN parking_lot_name_snapshot TEXT')
   }
+  if (!names.has('contact_name')) {
+    db.exec('ALTER TABLE orders ADD COLUMN contact_name TEXT')
+  }
+  if (!names.has('contact_phone')) {
+    db.exec('ALTER TABLE orders ADD COLUMN contact_phone TEXT')
+  }
   const priceColumns = db.prepare('PRAGMA table_info(price_versions)').all() as Array<{ name: string }>
   if (!priceColumns.some((column) => column.name === 'parking_lot_id')) {
     db.exec('ALTER TABLE price_versions ADD COLUMN parking_lot_id TEXT REFERENCES parking_lots(id)')
@@ -328,7 +340,7 @@ function migrate(db: ParkingDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_orders_lot_status_paid_at
       ON orders(parking_lot_id, status, paid_at DESC);
 
-    PRAGMA user_version = 8;
+    PRAGMA user_version = 9;
   `)
   })()
 }
@@ -589,10 +601,10 @@ export function insertOrder(db: ParkingDatabase, order: NewOrder): OrderRecord {
   db.prepare(`
     INSERT INTO orders (
       id, order_no, parking_lot_id, parking_lot_name_snapshot, client_request_id, openid,
-      customer_type, address, plate_number, duration_months,
+      customer_type, contact_name, contact_phone, address, plate_number, duration_months,
       amount, price_version_id, price_version, price_snapshot_json, status,
       payment_mode, created_at, expires_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
   `).run(
     order.id,
     order.orderNo,
@@ -601,6 +613,8 @@ export function insertOrder(db: ParkingDatabase, order: NewOrder): OrderRecord {
     order.clientRequestId,
     order.openid,
     order.customerType,
+    order.contactName,
+    order.contactPhone,
     order.address,
     order.plateNumber,
     order.durationMonths,
@@ -647,6 +661,8 @@ function mapOrder(row: OrderRow): OrderRecord {
     clientRequestId: row.client_request_id,
     openid: row.openid,
     customerType: row.customer_type,
+    contactName: row.contact_name,
+    contactPhone: row.contact_phone,
     address: row.address,
     plateNumber: row.plate_number,
     durationMonths: row.duration_months,
@@ -988,9 +1004,9 @@ function buildOrderWhere(filters: Omit<OrderFilters, 'page' | 'pageSize'>): {
     params.push(filters.durationMonths)
   }
   if (filters.keyword) {
-    clauses.push('(o.plate_number LIKE ? OR o.address LIKE ? OR o.order_no LIKE ?)')
+    clauses.push('(o.plate_number LIKE ? OR o.address LIKE ? OR o.order_no LIKE ? OR o.contact_name LIKE ? OR o.contact_phone LIKE ?)')
     const keyword = `%${filters.keyword}%`
-    params.push(keyword, keyword, keyword)
+    params.push(keyword, keyword, keyword, keyword, keyword)
   }
   return { clause: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params }
 }
