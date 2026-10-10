@@ -83,6 +83,10 @@ export const priceItemSchema = z.object({
 
 export const updatePricesSchema = z.object({
   items: z.array(priceItemSchema).length(8, '必须提交全部8项价格'),
+  enabledDurations: z.array(durationSchema)
+    .min(1, '请至少启用一种缴费时长')
+    .refine((durations) => new Set(durations).size === durations.length, '缴费时长不能重复')
+    .optional(),
 })
 
 export interface PriceItem {
@@ -94,6 +98,7 @@ export interface PriceItem {
 export interface PriceList {
   version: number
   enabled: boolean
+  enabledDurations: DurationMonths[]
   items: PriceItem[]
 }
 

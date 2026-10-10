@@ -144,10 +144,14 @@ export const adminApi = {
     request<AdminSummary>(`/api/admin/summary${toQuery(filters)}`),
   prices: (parkingLotId: string) =>
     request<PriceConfig>(`/api/admin/prices${toQuery({ parkingLotId })}`),
-  savePrices: (parkingLotId: string, items: PriceItem[]) =>
+  savePrices: (
+    parkingLotId: string,
+    items: PriceItem[],
+    enabledDurations: PriceConfig['enabledDurations'],
+  ) =>
     request<PriceConfig>(`/api/admin/prices${toQuery({ parkingLotId })}`, {
       method: 'PUT',
-      body: json({ items }),
+      body: json({ items, enabledDurations }),
     }),
   orders: (filters: OrderFilters) =>
     request<OrderListResult>(`/api/admin/orders${toQuery(filters as Record<string, unknown>)}`),

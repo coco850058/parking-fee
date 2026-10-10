@@ -177,7 +177,7 @@ describe('多停车场上线回归', () => {
       for (let startup = 0; startup < 2; startup += 1) {
         const db = openDatabase(config)
         try {
-          expect(db.pragma('user_version', { simple: true })).toBe(7)
+          expect(db.pragma('user_version', { simple: true })).toBe(8)
           expect(db.prepare('SELECT COUNT(*) AS n FROM parking_lots').get()).toEqual({ n: 1 })
           expect(db.prepare('SELECT plate_prefix FROM parking_lots WHERE id = ?').get(INITIAL_PARKING_LOT_ID))
             .toEqual({ plate_prefix: '新A' })

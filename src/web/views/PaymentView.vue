@@ -142,7 +142,7 @@
 
           <div class="duration-grid" role="radiogroup" aria-label="缴费时长">
             <button
-              v-for="months in durations"
+              v-for="months in availableDurations"
               :key="months"
               type="button"
               class="duration-option"
@@ -257,6 +257,11 @@ let loadSequence = 0;
 let formParkingLotId = '';
 
 const hasRecent = computed(() => Boolean(recent.value?.address || recent.value?.plateNumber));
+const availableDurations = computed(() => {
+  if (!prices.value) return [];
+  const configured = prices.value.enabledDurations ?? durations;
+  return durations.filter((months) => configured.includes(months));
+});
 const currentAmount = computed(() => priceFor(form.durationMonths));
 const isQrLocked = computed(() => typeof route.params.parkingLotId === 'string');
 const routeParkingLotId = computed(() => {
@@ -280,9 +285,10 @@ function resultQuery(extra: Record<string, string> = {}) {
 }
 
 function priceFor(months: DurationMonths) {
+  if (!prices.value || !availableDurations.value.includes(months)) return undefined;
   return prices.value?.items.find(
     (item) => item.customerType === form.customerType && item.durationMonths === months,
-  )?.amount;
+  )?.amount || undefined;
 }
 
 function recentKey() {
@@ -306,7 +312,10 @@ function restoreRecent() {
   form.address = recent.value.address || '';
   form.plateNumber = recent.value.plateNumber || parkingLot.value?.platePrefix || '新A';
   newEnergy.value = Array.from(normalizePlate(form.plateNumber)).length === 8;
-  if (durations.includes(recent.value.durationMonths as DurationMonths)) {
+  if (
+    availableDurations.value.includes(recent.value.durationMonths as DurationMonths)
+    && priceFor(recent.value.durationMonths as DurationMonths) !== undefined
+  ) {
     form.durationMonths = recent.value.durationMonths as DurationMonths;
   }
   showToast('已填入最近信息');
@@ -493,8 +502,9 @@ async function loadInitial() {
     prices.value = priceResult;
     if (!priceResult.enabled) loadError.value = '当前缴费通道暂未开放';
     if (priceFor(form.durationMonths) === undefined) {
-      const available = durations.find((months) => priceFor(months) !== undefined);
+      const available = availableDurations.value.find((months) => priceFor(months) !== undefined);
       if (available) form.durationMonths = available;
+      else if (priceResult.enabled) loadError.value = '当前停车场暂无可选缴费时长';
     }
   } catch (error) {
     if (sequence === loadSequence) {
@@ -586,7 +596,7 @@ async function submitOrder() {
     }
   } catch (error) {
     closeToast();
-    if (error instanceof ApiError && error.code === 'PRICE_CHANGED') {
+    if (error instanceof ApiError && (error.code === 'PRICE_CHANGED' || error.code === 'DURATION_DISABLED')) {
       clientRequestId = '';
       requestFingerprint = '';
       await loadInitial();

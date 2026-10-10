@@ -160,6 +160,31 @@
           </div>
 
           <template v-else-if="priceConfig">
+            <section class="surface-card duration-settings">
+              <div class="duration-settings-head">
+                <h3>开放缴费时长</h3>
+                <p>关闭的时长不会出现在缴费页；原金额保留，重新开放后可继续使用。</p>
+              </div>
+              <div class="duration-toggle-grid" aria-label="开放缴费时长">
+                <button
+                  v-for="months in durations"
+                  :key="months"
+                  type="button"
+                  class="duration-toggle"
+                  :class="{ active: enabledDurations.includes(months) }"
+                  :aria-pressed="enabledDurations.includes(months)"
+                  :disabled="savingPrices"
+                  @click="toggleDuration(months)"
+                >
+                  <span>{{ durationText[months] }}</span>
+                  <span class="duration-toggle-status">
+                    <van-icon :name="enabledDurations.includes(months) ? 'success' : 'plus'" />
+                    {{ enabledDurations.includes(months) ? '已开放' : '未开放' }}
+                  </span>
+                </button>
+              </div>
+            </section>
+
             <section
               v-for="customerType in customerTypes"
               :key="customerType"
@@ -176,7 +201,7 @@
               </div>
 
               <div class="price-matrix">
-                <label v-for="months in durations" :key="months" class="price-input-card">
+                <label v-for="months in enabledDurations" :key="months" class="price-input-card">
                   <span>{{ durationText[months] }}</span>
                   <div>
                     <i>¥</i>
@@ -185,6 +210,7 @@
                       type="text"
                       inputmode="decimal"
                       maxlength="10"
+                      :disabled="savingPrices"
                       :aria-label="`${customerTypeText[customerType]}${durationText[months]}金额`"
                       @blur="normalizePriceInput(customerType, months)"
                     />
@@ -639,6 +665,7 @@ const pricesLoading = ref(false);
 const pricesError = ref('');
 const savingPrices = ref(false);
 const priceInputs = reactive<Record<string, string>>({});
+const enabledDurations = ref<DurationMonths[]>([1, 3, 6, 12]);
 const orders = ref<Order[]>([]);
 const orderTotal = ref(0);
 const orderPage = ref(1);
@@ -870,6 +897,8 @@ function priceKey(customerType: CustomerType, months: DurationMonths) {
 }
 
 function fillPriceInputs(config: PriceConfig) {
+  const configured = config.enabledDurations ?? durations;
+  enabledDurations.value = durations.filter((months) => configured.includes(months));
   customerTypes.forEach((customerType) => {
     durations.forEach((months) => {
       const amount = config.items.find(
@@ -879,6 +908,20 @@ function fillPriceInputs(config: PriceConfig) {
         amount === undefined ? '' : (amount / 100).toFixed(2);
     });
   });
+}
+
+function toggleDuration(months: DurationMonths) {
+  if (enabledDurations.value.includes(months)) {
+    if (enabledDurations.value.length === 1) {
+      showFailToast('至少保留一个缴费时长');
+      return;
+    }
+    enabledDurations.value = enabledDurations.value.filter((value) => value !== months);
+  } else {
+    enabledDurations.value = durations.filter(
+      (value) => value === months || enabledDurations.value.includes(value),
+    );
+  }
 }
 
 async function loadPrices() {
@@ -908,15 +951,23 @@ function normalizePriceInput(customerType: CustomerType, months: DurationMonths)
 async function savePrices() {
   const parkingLotId = priceParkingLotId.value;
   if (savingPrices.value || !parkingLotId) return;
+  if (enabledDurations.value.length === 0) {
+    showFailToast('至少保留一个缴费时长');
+    return;
+  }
   const items: PriceItem[] = [];
   for (const customerType of customerTypes) {
     for (const durationMonths of durations) {
-      const raw = priceInputs[priceKey(customerType, durationMonths)].trim();
-      if (!/^\d+(\.\d{1,2})?$/.test(raw) || Number(raw) <= 0) {
+      const raw = (priceInputs[priceKey(customerType, durationMonths)] ?? '').trim();
+      const isEnabled = enabledDurations.value.includes(durationMonths);
+      if (
+        (isEnabled || raw !== '')
+        && (!/^\d+(\.\d{1,2})?$/.test(raw) || (isEnabled && Number(raw) <= 0))
+      ) {
         showFailToast(`${customerTypeText[customerType]}${durationText[durationMonths]}金额无效`);
         return;
       }
-      const amount = Math.round(Number(raw) * 100);
+      const amount = raw === '' ? 0 : Math.round(Number(raw) * 100);
       if (!Number.isSafeInteger(amount)) {
         showFailToast('金额超出允许范围');
         return;
@@ -927,7 +978,7 @@ async function savePrices() {
 
   savingPrices.value = true;
   try {
-    const config = await adminApi.savePrices(parkingLotId, items);
+    const config = await adminApi.savePrices(parkingLotId, items, enabledDurations.value);
     if (parkingLotId === priceParkingLotId.value) {
       priceConfig.value = config;
       fillPriceInputs(config);
@@ -1858,8 +1909,73 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.duration-settings,
 .price-group {
   padding: 16px;
+}
+
+.duration-settings-head h3,
+.duration-settings-head p {
+  margin: 0;
+}
+
+.duration-settings-head h3 {
+  font-size: 15px;
+}
+
+.duration-settings-head p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.duration-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.duration-toggle {
+  display: flex;
+  min-width: 0;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  background: #fafafa;
+  text-align: left;
+}
+
+.duration-toggle.active {
+  border-color: var(--brand);
+  color: var(--brand-dark);
+  background: var(--brand-soft);
+}
+
+.duration-toggle > span:first-child {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.duration-toggle-status {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.duration-toggle.active .duration-toggle-status {
+  color: var(--brand-dark);
+}
+
+.duration-toggle:disabled {
+  opacity: 0.68;
 }
 
 .price-group-head {

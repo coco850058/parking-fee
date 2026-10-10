@@ -945,8 +945,8 @@ async function registerRoutes(context: AppContext): Promise<void> {
   app.put('/api/admin/prices', async (request) => {
     await requireAdmin(context, request)
     const { parkingLotId } = parkingLotQuerySchema.parse(request.query)
-    const { items } = updatePricesSchema.parse(request.body)
-    return { data: replacePrices(db, items, 'admin', now().toISOString(), parkingLotId) }
+    const { items, enabledDurations } = updatePricesSchema.parse(request.body)
+    return { data: replacePrices(db, items, 'admin', now().toISOString(), parkingLotId, enabledDurations) }
   })
 
   app.get('/api/admin/orders/export.csv', async (request, reply) => {

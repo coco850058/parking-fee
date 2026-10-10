@@ -166,6 +166,7 @@ function migrate(db: ParkingDatabase): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       version_no INTEGER NOT NULL UNIQUE,
       parking_lot_id TEXT REFERENCES parking_lots(id),
+      enabled_durations_json TEXT NOT NULL DEFAULT '[1,3,6,12]',
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
@@ -280,6 +281,9 @@ function migrate(db: ParkingDatabase): void {
   if (!priceColumns.some((column) => column.name === 'parking_lot_id')) {
     db.exec('ALTER TABLE price_versions ADD COLUMN parking_lot_id TEXT REFERENCES parking_lots(id)')
   }
+  if (!priceColumns.some((column) => column.name === 'enabled_durations_json')) {
+    db.exec("ALTER TABLE price_versions ADD COLUMN enabled_durations_json TEXT NOT NULL DEFAULT '[1,3,6,12]'")
+  }
   const parkingLotColumns = db.prepare('PRAGMA table_info(parking_lots)').all() as Array<{ name: string }>
   if (!parkingLotColumns.some((column) => column.name === 'plate_prefix')) {
     db.exec("ALTER TABLE parking_lots ADD COLUMN plate_prefix TEXT NOT NULL DEFAULT '新A'")
@@ -324,7 +328,7 @@ function migrate(db: ParkingDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_orders_lot_status_paid_at
       ON orders(parking_lot_id, status, paid_at DESC);
 
-    PRAGMA user_version = 7;
+    PRAGMA user_version = 8;
   `)
   })()
 }
@@ -449,7 +453,7 @@ export function updateParkingLot(
       if (duplicate) throw new AppError(409, 'PARKING_LOT_NAME_EXISTS', '停车场名称已存在')
     }
     if (active && !previous.active && !getCurrentPrices(db, id).enabled) {
-      throw new AppError(409, 'PARKING_LOT_PRICE_NOT_CONFIGURED', '请先配置全部非零缴费标准再启用停车场')
+      throw new AppError(409, 'PARKING_LOT_PRICE_NOT_CONFIGURED', '请先配置已开放时长对应的非零缴费标准再启用停车场')
     }
     db.prepare('UPDATE parking_lots SET name = ?, plate_prefix = ?, active = ?, updated_at = ? WHERE id = ?')
       .run(name, platePrefix, Number(active), now, id)
@@ -465,9 +469,15 @@ export function getCurrentPrices(db: ParkingDatabase, parkingLotId?: string): Pr
   const id = parkingLotId ?? resolvePublicParkingLot(db).id
   getParkingLot(db, id)
   const version = db
-    .prepare('SELECT id, version_no FROM price_versions WHERE parking_lot_id = ? ORDER BY version_no DESC LIMIT 1')
-    .get(id) as { id: number; version_no: number } | undefined
+    .prepare('SELECT id, version_no, enabled_durations_json FROM price_versions WHERE parking_lot_id = ? ORDER BY version_no DESC LIMIT 1')
+    .get(id) as { id: number; version_no: number; enabled_durations_json: string } | undefined
   if (!version) throw new AppError(500, 'PRICE_NOT_CONFIGURED', '价格尚未配置')
+  let enabledDurations: DurationMonths[]
+  try {
+    enabledDurations = normalizeEnabledDurations(JSON.parse(version.enabled_durations_json))
+  } catch {
+    throw new AppError(500, 'PRICE_NOT_CONFIGURED', '缴费时长配置无效')
+  }
   const rows = db
     .prepare(`
       SELECT customer_type, duration_months, amount
@@ -488,9 +498,25 @@ export function getCurrentPrices(db: ParkingDatabase, parkingLotId?: string): Pr
   return {
     versionId: version.id,
     version: version.version_no,
-    enabled: items.length === 8 && items.every((item) => item.amount > 0),
+    enabled: items.length === 8 && enabledDurations.every((duration) =>
+      customerTypes.every((type) => items.some((item) =>
+        item.customerType === type && item.durationMonths === duration && item.amount > 0,
+      )),
+    ),
+    enabledDurations,
     items,
   }
+}
+
+function normalizeEnabledDurations(value: unknown): DurationMonths[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > durationOptions.length) {
+    throw new AppError(400, 'INVALID_DURATIONS', '请至少启用一种有效的缴费时长')
+  }
+  const received = new Set(value)
+  if (received.size !== value.length || value.some((duration) => !durationOptions.includes(duration))) {
+    throw new AppError(400, 'INVALID_DURATIONS', '缴费时长不能重复或超出支持范围')
+  }
+  return durationOptions.filter((duration) => received.has(duration))
 }
 
 function assertCompletePriceMatrix(items: PriceItem[]): void {
@@ -509,17 +535,19 @@ export function replacePrices(
   actor: string,
   now: string,
   parkingLotId?: string,
+  enabledDurations?: DurationMonths[],
 ): PriceList {
   const lot = parkingLotId ? getParkingLot(db, parkingLotId) : resolvePublicParkingLot(db)
   assertCompletePriceMatrix(items)
+  const selectedDurations = normalizeEnabledDurations(enabledDurations ?? getCurrentPrices(db, lot.id).enabledDurations)
   db.transaction(() => {
     const current = db.prepare('SELECT COALESCE(MAX(version_no), 0) AS version FROM price_versions').get() as {
       version: number
     }
     const nextVersion = current.version + 1
     const version = db
-      .prepare('INSERT INTO price_versions (version_no, parking_lot_id, created_by, created_at) VALUES (?, ?, ?, ?)')
-      .run(nextVersion, lot.id, actor, now)
+      .prepare('INSERT INTO price_versions (version_no, parking_lot_id, enabled_durations_json, created_by, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(nextVersion, lot.id, JSON.stringify(selectedDurations), actor, now)
     const insert = db.prepare(`
       INSERT INTO price_items (price_version_id, customer_type, duration_months, amount)
       VALUES (?, ?, ?, ?)
@@ -530,7 +558,7 @@ export function replacePrices(
     db.prepare(`
       INSERT INTO audit_logs (actor, action, target_type, target_id, details_json, created_at)
       VALUES (?, 'prices.update', 'price_version', ?, ?, ?)
-    `).run(actor, String(nextVersion), JSON.stringify({ parkingLotId: lot.id, items }), now)
+    `).run(actor, String(nextVersion), JSON.stringify({ parkingLotId: lot.id, enabledDurations: selectedDurations, items }), now)
   })()
   const { versionId: _versionId, ...prices } = getCurrentPrices(db, lot.id)
   return prices
@@ -541,6 +569,9 @@ export function findPrice(
   customerType: CustomerType,
   durationMonths: DurationMonths,
 ): number {
+  if (!prices.enabledDurations.includes(durationMonths)) {
+    throw new AppError(409, 'DURATION_DISABLED', '该停车场暂不支持此缴费时长，请重新选择')
+  }
   if (!prices.enabled) {
     throw new AppError(409, 'PAYMENT_DISABLED', '缴费通道暂未开放')
   }

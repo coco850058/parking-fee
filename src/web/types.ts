@@ -20,6 +20,7 @@ export interface PriceItem {
 export interface PriceConfig {
   version: number | string;
   enabled: boolean;
+  enabledDurations: DurationMonths[];
   items: PriceItem[];
 }
 

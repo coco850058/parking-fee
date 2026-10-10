@@ -68,7 +68,9 @@ describe('SQLite 数据一致性', () => {
       expect(order.parkingLotName).toBe(INITIAL_PARKING_LOT_NAME)
       expect(migrated.prepare('SELECT parking_lot_id FROM price_versions WHERE id = 1').get())
         .toEqual({ parking_lot_id: INITIAL_PARKING_LOT_ID })
-      expect(migrated.pragma('user_version', { simple: true })).toBe(7)
+      expect(migrated.pragma('user_version', { simple: true })).toBe(8)
+      expect(migrated.prepare('SELECT enabled_durations_json FROM price_versions WHERE id = 1').get())
+        .toEqual({ enabled_durations_json: '[1,3,6,12]' })
       expect(listParkingLots(migrated)[0].platePrefix).toBe('新A')
       expect(migrated.prepare("SELECT name FROM sqlite_master WHERE name = 'refunds'").get()).toBeTruthy()
       expect(migrated.prepare("SELECT name FROM sqlite_master WHERE name = 'idx_orders_status_paid_at'").get()).toBeTruthy()
@@ -104,7 +106,7 @@ describe('SQLite 数据一致性', () => {
           { id: INITIAL_PARKING_LOT_ID, name: INITIAL_PARKING_LOT_NAME, active: true, platePrefix: '新A' },
           { id: secondId, name: '旧备用停车场', active: false, platePrefix: '新A' },
         ])
-      expect(migrated.pragma('user_version', { simple: true })).toBe(7)
+      expect(migrated.pragma('user_version', { simple: true })).toBe(8)
     } finally {
       migrated.close()
       rmSync(directory, { recursive: true, force: true })
