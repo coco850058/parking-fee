@@ -58,7 +58,7 @@
               <strong>{{ item.plateNumber }}</strong>
               <span :class="['status-pill', historyStatusTone(item)]">{{ historyStatusText(item) }}</span>
             </div>
-            <p>{{ customerTypeText[item.customerType] }} · {{ durationText[item.durationMonths] }}</p>
+            <p>{{ customerTypeText[item.customerType] }} · {{ orderDurationText(item.durationMonths) }}</p>
             <p v-if="item.parkingLotName" class="history-lot-name">
               <van-icon name="location-o" /> {{ item.parkingLotName }}
             </p>
@@ -102,7 +102,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { publicApi } from '../api';
 import type { Order } from '../types';
-import { customerTypeText, durationText, formatDateTime, formatMoney } from '../utils';
+import { customerTypeText, formatDateTime, formatMoney, orderDurationText } from '../utils';
 
 const router = useRouter();
 const route = useRoute();

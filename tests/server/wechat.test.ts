@@ -192,13 +192,16 @@ describe('微信支付回调校验', () => {
     expect(createPayload.time_expire).toBe(order.expiresAt)
     expect(JSON.stringify(createPayload)).not.toContain(order.contactName)
     expect(JSON.stringify(createPayload)).not.toContain(order.contactPhone)
+    await client.createJsapiOrder({ ...order, orderNo: 'PF202609220002', durationMonths: null, pricingMode: 'manual' })
+    const manualPayload = JSON.parse(requests[1]?.body ?? '{}') as Record<string, unknown>
+    expect(manualPayload.description).toBe('停车费-苏A88888-手动金额')
 
     await client.closeOrder(order.orderNo)
-    expect(requests[1]).toMatchObject({
+    expect(requests[2]).toMatchObject({
       method: 'POST',
       body: JSON.stringify({ mchid: '1900000001' }),
       acceptLanguage: 'zh-CN',
     })
-    expect(requests[1]?.url).toContain(`/v3/pay/transactions/out-trade-no/${order.orderNo}/close`)
+    expect(requests[2]?.url).toContain(`/v3/pay/transactions/out-trade-no/${order.orderNo}/close`)
   })
 })

@@ -132,7 +132,7 @@
           <div class="page-intro">
             <div>
               <h2>缴费金额设置</h2>
-              <p>逐项选择固定金额或由缴费人手动填写；修改后仅影响新订单</p>
+              <p>按用户类型设置固定金额或手动金额；修改后仅影响新订单</p>
             </div>
             <span v-if="priceConfig">版本 {{ priceConfig.version }}</span>
           </div>
@@ -160,10 +160,10 @@
           </div>
 
           <template v-else-if="priceConfig">
-            <section class="surface-card duration-settings">
+            <section v-if="hasFixedPricing" class="surface-card duration-settings">
               <div class="duration-settings-head">
                 <h3>开放缴费时长</h3>
-                <p>关闭的时长不会出现在缴费页；原金额保留，重新开放后可继续使用。</p>
+                <p>仅固定金额使用缴费时长；关闭后原金额保留，重新开放时可继续使用。</p>
               </div>
               <div class="duration-toggle-grid" aria-label="开放缴费时长">
                 <button
@@ -200,21 +200,24 @@
                 </div>
               </div>
 
-              <div class="price-matrix">
+              <div class="price-mode-switch" role="group" :aria-label="`${customerTypeText[customerType]}金额方式`">
+                <button
+                  v-for="mode in pricingModes"
+                  :key="mode.value"
+                  type="button"
+                  :class="{ active: priceModes[customerType] === mode.value }"
+                  :aria-pressed="priceModes[customerType] === mode.value"
+                  :disabled="savingPrices"
+                  @click="priceModes[customerType] = mode.value"
+                >{{ mode.label }}</button>
+              </div>
+              <p v-if="priceModes[customerType] === 'manual'" class="manual-price-description">
+                缴费人填写 1–100000 元整，无需选择缴费时长
+              </p>
+              <div v-else-if="priceModes[customerType] === 'fixed'" class="price-matrix">
                 <div v-for="months in enabledDurations" :key="months" class="price-input-card">
                   <span>{{ durationText[months] }}</span>
-                  <div class="price-mode-switch" role="group" :aria-label="`${customerTypeText[customerType]}${durationText[months]}金额方式`">
-                    <button
-                      v-for="mode in pricingModes"
-                      :key="mode.value"
-                      type="button"
-                      :class="{ active: priceModes[priceKey(customerType, months)] === mode.value }"
-                      :aria-pressed="priceModes[priceKey(customerType, months)] === mode.value"
-                      :disabled="savingPrices"
-                      @click="priceModes[priceKey(customerType, months)] = mode.value"
-                    >{{ mode.label }}</button>
-                  </div>
-                  <label v-if="priceModes[priceKey(customerType, months)] !== 'manual'" :for="`price-${priceKey(customerType, months)}`" class="fixed-price-input">
+                  <label :for="`price-${priceKey(customerType, months)}`" class="fixed-price-input">
                     <i>¥</i>
                     <input
                       :id="`price-${priceKey(customerType, months)}`"
@@ -227,9 +230,9 @@
                       @blur="normalizePriceInput(customerType, months)"
                     />
                   </label>
-                  <p v-else class="manual-price-description">由缴费人填写 1–100000 元整</p>
                 </div>
               </div>
+              <p v-else class="mixed-price-warning">当前配置同时包含固定金额和手动金额，请选择统一的金额方式后保存。</p>
             </section>
 
             <div class="price-save-bar safe-bottom">
@@ -362,7 +365,7 @@
                 <p v-if="item.contactName || item.contactPhone">
                   <van-icon name="contact-o" /> {{ [item.contactName, item.contactPhone].filter(Boolean).join(' · ') }}
                 </p>
-                <p><van-icon name="clock-o" /> {{ durationText[item.durationMonths] }} · {{ formatDateTime(item.createdAt) }}</p>
+                <p><van-icon name="clock-o" /> {{ orderDurationText(item.durationMonths) }} · {{ formatDateTime(item.createdAt) }}</p>
               </div>
               <div class="order-card-foot">
                 <span class="order-no">{{ item.orderNo }}</span>
@@ -461,7 +464,7 @@
           <div class="detail-summary">
             <div>
               <span>{{ selectedOrder.plateNumber }}</span>
-              <small>{{ customerTypeText[selectedOrder.customerType] }} · {{ durationText[selectedOrder.durationMonths] }}</small>
+              <small>{{ customerTypeText[selectedOrder.customerType] }} · {{ orderDurationText(selectedOrder.durationMonths) }}</small>
             </div>
             <div>
               <strong class="amount-value">¥{{ formatMoney(selectedOrder.amount) }}</strong>
@@ -629,6 +632,7 @@ import {
   formatDateTime,
   formatMoney,
   localDate,
+  orderDurationText,
   plateLetters,
   plateProvinces,
   statusText,
@@ -687,7 +691,7 @@ const pricesLoading = ref(false);
 const pricesError = ref('');
 const savingPrices = ref(false);
 const priceInputs = reactive<Record<string, string>>({});
-const priceModes = reactive<Record<string, PricingMode>>({});
+const priceModes = reactive<Record<CustomerType, PricingMode | null>>({ merchant: null, resident: null });
 const enabledDurations = ref<DurationMonths[]>([1, 3, 6, 12]);
 const orders = ref<Order[]>([]);
 const orderTotal = ref(0);
@@ -710,6 +714,7 @@ let summaryRequestId = 0;
 
 const customerTypes: CustomerType[] = ['merchant', 'resident'];
 const durations: DurationMonths[] = [1, 3, 6, 12];
+const hasFixedPricing = computed(() => customerTypes.some((customerType) => priceModes[customerType] !== 'manual'));
 const pricingModes: Array<{ value: PricingMode; label: string }> = [
   { value: 'fixed', label: '固定金额' },
   { value: 'manual', label: '手动输入' },
@@ -718,7 +723,7 @@ const filters = reactive<{
   keyword: string;
   status: OrderStatus | '';
   customerType: CustomerType | '';
-  durationMonths: DurationMonths | '';
+  durationMonths: DurationMonths | 'manual' | '';
   parkingLotId: string;
   from: string;
   to: string;
@@ -759,6 +764,7 @@ const customerOptions = [
 ];
 const durationOptions = [
   { text: '全部时长', value: '' },
+  { text: '手动金额', value: 'manual' },
   { text: '1个月', value: 1 },
   { text: '3个月', value: 3 },
   { text: '半年', value: 6 },
@@ -927,12 +933,13 @@ function fillPriceInputs(config: PriceConfig) {
   const configured = config.enabledDurations ?? durations;
   enabledDurations.value = durations.filter((months) => configured.includes(months));
   customerTypes.forEach((customerType) => {
+    const modes = new Set(config.items.filter((item) => item.customerType === customerType).map((item) => item.mode));
+    priceModes[customerType] = modes.size > 1 ? null : config.items.find((item) => item.customerType === customerType)?.mode ?? 'fixed';
     durations.forEach((months) => {
       const item = config.items.find(
         (item) => item.customerType === customerType && item.durationMonths === months,
       );
       const key = priceKey(customerType, months);
-      priceModes[key] = item?.mode ?? 'fixed';
       const amount = item?.amount;
       priceInputs[key] =
         amount === undefined ? '' : (amount / 100).toFixed(2);
@@ -985,21 +992,33 @@ async function savePrices() {
     showFailToast('至少保留一个缴费时长');
     return;
   }
+  const unresolvedType = customerTypes.find((customerType) => priceModes[customerType] === null);
+  if (unresolvedType) {
+    showFailToast(`请先为${customerTypeText[unresolvedType]}选择统一的金额方式`);
+    return;
+  }
   const items: PriceItem[] = [];
   for (const customerType of customerTypes) {
+    const mode = priceModes[customerType] ?? 'fixed';
     for (const durationMonths of durations) {
       const key = priceKey(customerType, durationMonths);
-      const raw = (priceInputs[key] ?? '').trim();
-      const mode = priceModes[key] ?? 'fixed';
-      const isEnabled = enabledDurations.value.includes(durationMonths);
-      if (
-        ((isEnabled && mode === 'fixed') || raw !== '')
-        && (!/^\d+(\.\d{1,2})?$/.test(raw) || (isEnabled && mode === 'fixed' && Number(raw) <= 0))
-      ) {
-        showFailToast(`${customerTypeText[customerType]}${durationText[durationMonths]}金额无效`);
-        return;
+      let amount: number;
+      if (mode === 'manual') {
+        amount = priceConfig.value.items.find((item) =>
+          item.customerType === customerType && item.durationMonths === durationMonths,
+        )?.amount ?? 0;
+      } else {
+        const raw = (priceInputs[key] ?? '').trim();
+        const isEnabled = enabledDurations.value.includes(durationMonths);
+        if (
+          (isEnabled || raw !== '')
+          && (!/^\d+(\.\d{1,2})?$/.test(raw) || (isEnabled && Number(raw) <= 0))
+        ) {
+          showFailToast(`${customerTypeText[customerType]}${durationText[durationMonths]}金额无效`);
+          return;
+        }
+        amount = raw === '' ? 0 : Math.round(Number(raw) * 100);
       }
-      const amount = raw === '' ? 0 : Math.round(Number(raw) * 100);
       if (!Number.isSafeInteger(amount) || amount > 10_000_000) {
         showFailToast('金额超出允许范围');
         return;
@@ -2057,6 +2076,7 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 9px;
+  margin-top: 10px;
 }
 
 .price-input-card {
@@ -2113,6 +2133,13 @@ onMounted(async () => {
   margin: 11px 1px 1px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.mixed-price-warning {
+  margin: 11px 1px 1px;
+  color: #9a6700;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .price-input-card i {

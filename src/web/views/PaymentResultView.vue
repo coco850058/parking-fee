@@ -96,9 +96,13 @@
               <dt>缴费身份</dt>
               <dd>{{ customerTypeText[order.customerType] }}</dd>
             </div>
-            <div>
+            <div v-if="order.durationMonths !== null">
               <dt>缴费时长</dt>
               <dd>{{ durationText[order.durationMonths] }}</dd>
+            </div>
+            <div v-else>
+              <dt>缴费方式</dt>
+              <dd>手动金额</dd>
             </div>
             <div>
               <dt>{{ order.contactName || order.contactPhone ? '门牌号码' : '地址' }}</dt>

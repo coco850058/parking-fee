@@ -55,7 +55,7 @@ interface OrderRow {
   contact_phone: string | null
   address: string
   plate_number: string
-  duration_months: DurationMonths
+  duration_months: DurationMonths | null
   amount: number
   price_version: number
   price_snapshot_json: string
@@ -114,7 +114,7 @@ export interface NewOrder {
   contactPhone: string
   address: string
   plateNumber: string
-  durationMonths: DurationMonths
+  durationMonths: DurationMonths | null
   amount: number
   pricingMode: PricingMode
   priceVersion: number
@@ -130,7 +130,7 @@ export interface OrderFilters {
   to?: string
   status?: OrderStatus
   customerType?: CustomerType
-  durationMonths?: DurationMonths
+  durationMonths?: DurationMonths | 'manual'
   keyword?: string
   page: number
   pageSize: number
@@ -200,7 +200,7 @@ function migrate(db: ParkingDatabase): void {
       contact_phone TEXT,
       address TEXT NOT NULL,
       plate_number TEXT NOT NULL,
-      duration_months INTEGER NOT NULL CHECK (duration_months IN (1, 3, 6, 12)),
+      duration_months INTEGER CHECK (duration_months IN (1, 3, 6, 12)),
       amount INTEGER NOT NULL CHECK (amount >= 0),
       price_version_id INTEGER NOT NULL REFERENCES price_versions(id),
       price_version INTEGER NOT NULL,
@@ -274,8 +274,12 @@ function migrate(db: ParkingDatabase): void {
 
   // v1 数据库没有幂等请求号和过期时间。SQLite 添加 NOT NULL 列需要默认值，
   // 因此先添加可空列，再一次性回填；所有新写入仍由应用层保证非空。
-  const columns = db.prepare('PRAGMA table_info(orders)').all() as Array<{ name: string }>
+  const columns = db.prepare('PRAGMA table_info(orders)').all() as Array<{ name: string; notnull: number }>
   const names = new Set(columns.map((column) => column.name))
+  // SQLite 3.53+ 可原位移除 NOT NULL，保留订单表、索引及支付/退款事件的外键关联。
+  if (columns.find((column) => column.name === 'duration_months')?.notnull) {
+    db.exec('ALTER TABLE orders ALTER duration_months DROP NOT NULL')
+  }
   if (!names.has('client_request_id')) {
     db.exec('ALTER TABLE orders ADD COLUMN client_request_id TEXT')
   }
@@ -349,7 +353,7 @@ function migrate(db: ParkingDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_orders_lot_status_paid_at
       ON orders(parking_lot_id, status, paid_at DESC);
 
-    PRAGMA user_version = 10;
+    PRAGMA user_version = 11;
   `)
   })()
 }
@@ -521,12 +525,14 @@ export function getCurrentPrices(db: ParkingDatabase, parkingLotId?: string): Pr
   return {
     versionId: version.id,
     version: version.version_no,
-    enabled: items.length === 8 && enabledDurations.every((duration) =>
-      customerTypes.every((type) => items.some((item) =>
-        item.customerType === type && item.durationMonths === duration &&
-        (item.mode === 'manual' || item.amount > 0),
-      )),
-    ),
+    enabled: items.length === 8 && customerTypes.every((type) => {
+      const typeItems = items.filter((item) => item.customerType === type)
+      if (typeItems.length !== durationOptions.length ||
+        new Set(typeItems.map((item) => item.mode)).size !== 1) return false
+      if (typeItems[0].mode === 'manual') return true
+      return enabledDurations.every((duration) =>
+        typeItems.some((item) => item.durationMonths === duration && item.amount > 0))
+    }),
     enabledDurations,
     items,
   }
@@ -579,6 +585,10 @@ export function replacePrices(
       old.customerType === item.customerType && old.durationMonths === item.durationMonths,
     )?.mode ?? 'fixed',
   }))
+  if (customerTypes.some((type) =>
+    new Set(normalizedItems.filter((item) => item.customerType === type).map((item) => item.mode)).size !== 1)) {
+    throw new AppError(400, 'INVALID_PRICE_MODE', '同一用户类型的计价方式须一致；手动金额无需缴费时长')
+  }
   db.transaction(() => {
     const current = db.prepare('SELECT COALESCE(MAX(version_no), 0) AS version FROM price_versions').get() as {
       version: number
@@ -606,18 +616,25 @@ export function replacePrices(
 export function findPriceItem(
   prices: PriceList,
   customerType: CustomerType,
-  durationMonths: DurationMonths,
+  durationMonths: DurationMonths | null,
 ): PriceItem {
-  if (!prices.enabledDurations.includes(durationMonths)) {
-    throw new AppError(409, 'DURATION_DISABLED', '该停车场暂不支持此缴费时长，请重新选择')
-  }
   if (!prices.enabled) {
     throw new AppError(409, 'PAYMENT_DISABLED', '缴费通道暂未开放')
   }
-  const item = prices.items.find(
-    (candidate) =>
-      candidate.customerType === customerType && candidate.durationMonths === durationMonths,
-  )
+  const typeItems = prices.items.filter((candidate) => candidate.customerType === customerType)
+  if (typeItems[0]?.mode === 'manual') {
+    if (durationMonths !== null) {
+      throw new AppError(409, 'PRICE_CHANGED', '缴费页面已更新，手动金额无需选择时长；请关闭后重新扫码')
+    }
+    return typeItems[0]
+  }
+  if (durationMonths === null) {
+    throw new AppError(400, 'DURATION_REQUIRED', '请选择缴费时长')
+  }
+  if (!prices.enabledDurations.includes(durationMonths)) {
+    throw new AppError(409, 'DURATION_DISABLED', '该停车场暂不支持此缴费时长，请重新选择')
+  }
+  const item = typeItems.find((candidate) => candidate.durationMonths === durationMonths)
   if (!item || (item.mode === 'fixed' && item.amount <= 0)) {
     throw new AppError(409, 'PAYMENT_DISABLED', '该类型和时长暂未开放缴费')
   }
@@ -1038,8 +1055,10 @@ function buildOrderWhere(filters: Omit<OrderFilters, 'page' | 'pageSize'>): {
     clauses.push('o.customer_type = ?')
     params.push(filters.customerType)
   }
-  if (filters.durationMonths) {
-    clauses.push('o.duration_months = ?')
+  if (filters.durationMonths === 'manual') {
+    clauses.push("json_extract(o.price_snapshot_json, '$.mode') = 'manual'")
+  } else if (filters.durationMonths) {
+    clauses.push("o.duration_months = ? AND json_extract(o.price_snapshot_json, '$.mode') IS NOT 'manual'")
     params.push(filters.durationMonths)
   }
   if (filters.keyword) {

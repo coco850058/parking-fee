@@ -86,7 +86,7 @@ export const createOrderSchema = z.object({
   contactPhone: contactPhoneSchema,
   address: z.string().trim().min(1, '请填写门牌号码').max(120, '门牌号码不能超过120个字符'),
   plateNumber: plateNumberSchema,
-  durationMonths: durationSchema,
+  durationMonths: durationSchema.nullish(),
 })
 
 export const priceItemSchema = z.object({
@@ -133,7 +133,7 @@ export interface OrderRecord {
   contactPhone: string | null
   address: string
   plateNumber: string
-  durationMonths: DurationMonths
+  durationMonths: DurationMonths | null
   amount: number
   priceVersion: number
   pricingMode: PricingMode

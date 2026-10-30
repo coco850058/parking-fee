@@ -77,7 +77,7 @@ describe('固定价与缴费人手动填写金额', () => {
     const original = await prices()
     expect(original.items.every((item) => item.mode === 'fixed')).toBe(true)
     const updated = await save(original.items.map((item) =>
-      item.customerType === 'merchant' && item.durationMonths === 1
+      item.customerType === 'merchant'
         ? { ...item, mode: 'manual', amount: 0 }
         : item,
     ))
@@ -98,26 +98,31 @@ describe('固定价与缴费人手动填写金额', () => {
     ] as const) {
       const response = await app.inject({
         method: 'POST', url: '/api/public/orders',
-        payload: payload(updated.version, amount, { ...(mode ? { pricingMode: mode } : {}) }),
+        payload: payload(updated.version, amount, { durationMonths: null, ...(mode ? { pricingMode: mode } : {}) }),
       })
       expect(response.statusCode).toBe(expectedStatus)
       expect(errorCode(response)).toBe(expectedCode)
     }
     expect((await app.inject({ method: 'POST', url: '/api/public/orders',
-      payload: payload(updated.version, 10_000_001, { pricingMode: 'manual' }),
+      payload: payload(updated.version, 10_000_001, { pricingMode: 'manual', durationMonths: null }),
     })).statusCode).toBe(400)
 
     const smallest = await app.inject({ method: 'POST', url: '/api/public/orders',
-      payload: payload(updated.version, 100, { pricingMode: 'manual' }),
+      payload: payload(updated.version, 100, { pricingMode: 'manual', durationMonths: null }),
     })
     expect(smallest.statusCode).toBe(201)
-    expect(data<{ amount: number; pricingMode: string }>(smallest))
-      .toMatchObject({ amount: 100, pricingMode: 'manual' })
+    expect(data<{ amount: number; pricingMode: string; durationMonths: null }>(smallest))
+      .toMatchObject({ amount: 100, pricingMode: 'manual', durationMonths: null })
     const largest = await app.inject({ method: 'POST', url: '/api/public/orders',
-      payload: payload(updated.version, 10_000_000, { pricingMode: 'manual', plateNumber: '新A12346' }),
+      payload: payload(updated.version, 10_000_000, { pricingMode: 'manual', durationMonths: undefined, plateNumber: '新A12346' }),
     })
     expect(largest.statusCode).toBe(201)
-    expect(data<{ amount: number }>(largest).amount).toBe(10_000_000)
+    expect(data<{ amount: number; durationMonths: null }>(largest)).toMatchObject({ amount: 10_000_000, durationMonths: null })
+    const stalePaymentPage = await app.inject({ method: 'POST', url: '/api/public/orders',
+      payload: payload(updated.version, 100, { pricingMode: 'manual', durationMonths: 1 }),
+    })
+    expect(stalePaymentPage.statusCode).toBe(409)
+    expect(errorCode(stalePaymentPage)).toBe('PRICE_CHANGED')
 
     const paid = await app.inject({ method: 'POST', url: `/api/public/orders/${data<{ id: string }>(smallest).id}/mock-pay` })
     expect(data<{ status: string; amount: number }>(paid)).toMatchObject({ status: 'paid', amount: 100 })
@@ -128,12 +133,33 @@ describe('固定价与缴费人手动填写金额', () => {
     expect(refunded.statusCode).toBe(200)
     expect(data<{ status: string; refund: { amount: number } }>(refunded))
       .toMatchObject({ status: 'refunded', refund: { amount: 100 } })
+    const filtered = await app.inject({
+      method: 'GET', url: '/api/admin/orders?durationMonths=manual', headers: { cookie },
+    })
+    expect(filtered.statusCode).toBe(200)
+    expect(data<{ total: number; items: Array<{ durationMonths: number | null }> }>(filtered))
+      .toMatchObject({ total: 2, items: [{ durationMonths: null }, { durationMonths: null }] })
+    const exported = await app.inject({
+      method: 'GET', url: '/api/admin/orders/export.csv?durationMonths=manual', headers: { cookie },
+    })
+    expect(exported.statusCode).toBe(200)
+    const lines = exported.body.replace(/^\uFEFF/, '').split('\r\n')
+    expect(lines).toHaveLength(3)
+    expect(lines.slice(1).map((line) => line.split(',')[9])).toEqual(['', ''])
   })
 
   it('存在手动价时拒绝旧管理页面省略 mode，切回固定后严格核对金额', async () => {
     const original = await prices()
+    const mixed = await app.inject({
+      method: 'PUT', url: `/api/admin/prices?parkingLotId=${lotId}`,
+      headers: { cookie },
+      payload: { items: original.items.map((item) => item.customerType === 'merchant' && item.durationMonths === 1
+        ? { ...item, mode: 'manual' } : item) },
+    })
+    expect(mixed.statusCode).toBe(400)
+    expect(errorCode(mixed)).toBe('INVALID_PRICE_MODE')
     const manual = await save(original.items.map((item) =>
-      item.customerType === 'merchant' && item.durationMonths === 1 ? { ...item, mode: 'manual' } : item,
+      item.customerType === 'merchant' ? { ...item, mode: 'manual' } : item,
     ))
     const staleEdit = await app.inject({
       method: 'PUT', url: `/api/admin/prices?parkingLotId=${lotId}`,
@@ -157,7 +183,7 @@ describe('固定价与缴费人手动填写金额', () => {
       headers: { cookie },
       payload: {
         expectedVersion: retained.version,
-        items: retained.items.map((item) => item.customerType === 'merchant' && item.durationMonths === 1
+        items: retained.items.map((item) => item.customerType === 'merchant'
           ? { ...item, mode: 'fixed', amount: 12_345 }
           : item),
       },
@@ -172,6 +198,10 @@ describe('固定价与缴费人手动填写金额', () => {
       payload: payload(restored.version, 100, { pricingMode: 'fixed' }),
     })
     expect(errorCode(wrongAmount)).toBe('PRICE_CHANGED')
+    const missingDuration = await app.inject({ method: 'POST', url: '/api/public/orders',
+      payload: payload(restored.version, 12_345, { pricingMode: 'fixed', durationMonths: null }),
+    })
+    expect(errorCode(missingDuration)).toBe('DURATION_REQUIRED')
     const valid = await app.inject({ method: 'POST', url: '/api/public/orders',
       payload: payload(restored.version, 12_345, { pricingMode: 'fixed' }),
     })
@@ -179,13 +209,14 @@ describe('固定价与缴费人手动填写金额', () => {
     expect(data<{ amount: number }>(valid).amount).toBe(12_345)
   })
 
-  it('手动金额依旧受停车场、时长、价格版本和幂等键约束', async () => {
+  it('手动金额不需要时长，仍受停车场、价格版本和幂等键约束', async () => {
     const original = await prices()
     const first = await save(original.items.map((item) => ({ ...item, mode: 'manual', amount: 0 })), [6])
-    const disabled = await app.inject({ method: 'POST', url: '/api/public/orders',
-      payload: payload(first.version, 100, { pricingMode: 'manual' }),
+    const withoutDuration = await app.inject({ method: 'POST', url: '/api/public/orders',
+      payload: payload(first.version, 100, { pricingMode: 'manual', durationMonths: null }),
     })
-    expect(errorCode(disabled)).toBe('DURATION_DISABLED')
+    expect(withoutDuration.statusCode).toBe(201)
+    expect(data<{ durationMonths: null }>(withoutDuration).durationMonths).toBeNull()
 
     const secondLot = await app.inject({ method: 'POST', url: '/api/admin/parking-lots',
       headers: { cookie }, payload: { name: '手动金额测试停车场' },
@@ -200,7 +231,7 @@ describe('固定价与缴费人手动填写金额', () => {
 
     const requestId = randomUUID()
     const orderPayload = payload(second.version, 500, {
-      parkingLotId: secondId, pricingMode: 'manual', clientRequestId: requestId,
+      parkingLotId: secondId, pricingMode: 'manual', durationMonths: undefined, clientRequestId: requestId,
     })
     const created = await app.inject({ method: 'POST', url: '/api/public/orders', payload: orderPayload })
     expect(created.statusCode).toBe(201)
@@ -216,11 +247,11 @@ describe('固定价与缴费人手动填写金额', () => {
     })
     expect(errorCode(modeConflict)).toBe('IDEMPOTENCY_CONFLICT')
     const wrongLot = await app.inject({ method: 'POST', url: '/api/public/orders',
-      payload: payload(second.version, 500, { parkingLotId: lotId, pricingMode: 'manual' }),
+      payload: payload(second.version, 500, { parkingLotId: lotId, pricingMode: 'manual', durationMonths: null }),
     })
     expect(errorCode(wrongLot)).toBe('PRICE_CHANGED')
     const wrongVersion = await app.inject({ method: 'POST', url: '/api/public/orders',
-      payload: payload(secondPrices.version, 500, { parkingLotId: secondId, pricingMode: 'manual' }),
+      payload: payload(secondPrices.version, 500, { parkingLotId: secondId, pricingMode: 'manual', durationMonths: null }),
     })
     expect(errorCode(wrongVersion)).toBe('PRICE_CHANGED')
   })

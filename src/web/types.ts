@@ -69,7 +69,7 @@ export interface Order {
   contactPhone: string | null;
   address: string;
   plateNumber: string;
-  durationMonths: DurationMonths;
+  durationMonths: DurationMonths | null;
   createdAt: string;
   expiresAt?: string;
   paidAt?: string | null;
@@ -108,7 +108,7 @@ export interface OrderFilters {
   to?: string;
   status?: OrderStatus | '';
   customerType?: CustomerType | '';
-  durationMonths?: DurationMonths | '';
+  durationMonths?: DurationMonths | 'manual' | '';
   keyword?: string;
   parkingLotId?: string;
 }

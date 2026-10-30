@@ -226,7 +226,7 @@ function assertIdempotentPayload(
     order.contactPhone !== input.contactPhone ||
     order.address !== input.address ||
     order.plateNumber !== input.plateNumber ||
-    order.durationMonths !== input.durationMonths ||
+    order.durationMonths !== (input.durationMonths ?? null) ||
     order.priceVersion !== input.priceVersion ||
     order.pricingMode !== (input.pricingMode ?? 'fixed') ||
     order.amount !== input.expectedAmount
@@ -293,7 +293,7 @@ const orderQuerySchema = z.object({
   to: z.string().max(40).optional(),
   status: z.enum(orderStatuses).optional(),
   customerType: customerTypeSchema.optional(),
-  durationMonths: z.coerce.number().pipe(durationSchema).optional(),
+  durationMonths: z.union([z.literal('manual'), z.coerce.number().pipe(durationSchema)]).optional(),
   keyword: z.string().trim().max(100).optional(),
 })
 const summaryQuerySchema = z.object({
@@ -714,7 +714,8 @@ async function registerRoutes(context: AppContext): Promise<void> {
       if (input.priceVersion !== prices.version) {
         throw new AppError(409, 'PRICE_CHANGED', '缴费标准已更新，请确认最新金额')
       }
-      const priceItem = findPriceItem(prices, input.customerType, input.durationMonths)
+      const durationMonths = input.durationMonths ?? null
+      const priceItem = findPriceItem(prices, input.customerType, durationMonths)
       if (
         (input.pricingMode && input.pricingMode !== priceItem.mode) ||
         (priceItem.mode === 'manual' && input.pricingMode !== 'manual')
@@ -742,7 +743,7 @@ async function registerRoutes(context: AppContext): Promise<void> {
         contactPhone: input.contactPhone,
         address: input.address,
         plateNumber: input.plateNumber,
-        durationMonths: input.durationMonths,
+        durationMonths,
         amount,
         pricingMode: priceItem.mode,
         priceVersion: prices.version,

@@ -15,6 +15,10 @@ export const durationText: Record<DurationMonths, string> = {
   12: '一年',
 };
 
+export function orderDurationText(months: DurationMonths | null) {
+  return months === null ? '手动金额' : durationText[months];
+}
+
 export const statusText: Record<OrderStatus, string> = {
   pending: '待支付',
   paid: '已支付',

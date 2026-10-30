@@ -113,7 +113,7 @@ export const publicApi = {
     contactPhone: string;
     address: string;
     plateNumber: string;
-    durationMonths: number;
+    durationMonths?: number;
   }) => request<Order>('/api/public/orders', { method: 'POST', body: json(payload) }),
   order: (id: string | number) => request<Order>(`/api/public/orders/${encodeURIComponent(id)}`),
   orderHistory: (page = 1, pageSize = 20) =>

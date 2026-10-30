@@ -163,11 +163,11 @@
         <section class="surface-card form-section">
           <div class="section-head">
             <div>
-              <h2 class="section-title">选择缴费时长</h2>
+              <h2 class="section-title">{{ selectedPricingMode === 'manual' ? '填写缴费金额' : '选择缴费时长' }}</h2>
             </div>
           </div>
 
-          <div class="duration-grid" role="radiogroup" aria-label="缴费时长">
+          <div v-if="selectedPricingMode !== 'manual'" class="duration-grid" role="radiogroup" aria-label="缴费时长">
             <button
               v-for="months in availableDurations"
               :key="months"
@@ -180,8 +180,7 @@
               @click="form.durationMonths = months"
             >
               <b>{{ durationText[months] }}</b>
-              <span v-if="priceItemFor(months)?.mode === 'manual'">手动填写金额</span>
-              <span v-else-if="priceItemFor(months)" class="amount-value">
+              <span v-if="priceItemFor(months)" class="amount-value">
                 ¥{{ formatMoney(priceItemFor(months)?.amount) }}
               </span>
               <span v-else>暂不可选</span>
@@ -320,7 +319,12 @@ const availableDurations = computed(() => {
   const configured = prices.value.enabledDurations ?? durations;
   return durations.filter((months) => configured.includes(months));
 });
-const selectedPrice = computed(() => priceItemFor(form.durationMonths));
+const selectedPricingMode = computed(() => prices.value?.items.find(
+  (item) => item.customerType === form.customerType,
+)?.mode);
+const selectedPrice = computed(() => selectedPricingMode.value === 'manual'
+  ? prices.value?.items.find((item) => item.customerType === form.customerType && item.mode === 'manual')
+  : priceItemFor(form.durationMonths));
 const manualAmountError = computed(() => {
   if (!manualYuan.value) return '';
   return /^[1-9]\d{0,5}$/.test(manualYuan.value) && Number(manualYuan.value) <= 100000
@@ -359,7 +363,7 @@ function priceItemFor(months: DurationMonths): PriceItem | undefined {
   const item = prices.value.items.find(
     (item) => item.customerType === form.customerType && item.durationMonths === months,
   );
-  return item && (item.mode === 'manual' || item.amount > 0) ? item : undefined;
+  return item?.mode === 'fixed' && item.amount > 0 ? item : undefined;
 }
 
 function focusManualAmount() {
@@ -388,7 +392,7 @@ function restoreRecent() {
   form.address = recent.value.address || '';
   form.plateNumber = recent.value.plateNumber || parkingLot.value?.platePrefix || '新A';
   newEnergy.value = Array.from(normalizePlate(form.plateNumber)).length === 8;
-  if (
+  if (selectedPricingMode.value === 'fixed' &&
     availableDurations.value.includes(recent.value.durationMonths as DurationMonths)
     && priceItemFor(recent.value.durationMonths as DurationMonths) !== undefined
   ) {
@@ -402,7 +406,7 @@ function saveRecent() {
     customerType: form.customerType,
     address: form.address,
     plateNumber: normalizePlate(form.plateNumber),
-    durationMonths: form.durationMonths,
+    ...(selectedPricingMode.value === 'fixed' ? { durationMonths: form.durationMonths } : {}),
   };
   try {
     localStorage.setItem(recentKey(), JSON.stringify(value));
@@ -589,7 +593,7 @@ async function loadInitial() {
     if (sequence !== loadSequence) return;
     prices.value = priceResult;
     if (!priceResult.enabled) loadError.value = '当前缴费通道暂未开放';
-    if (priceItemFor(form.durationMonths) === undefined) {
+    if (selectedPricingMode.value === 'fixed' && priceItemFor(form.durationMonths) === undefined) {
       const available = availableDurations.value.find((months) => priceItemFor(months) !== undefined);
       if (available) form.durationMonths = available;
       else if (priceResult.enabled) loadError.value = '当前停车场暂无可选缴费时长';
@@ -627,6 +631,7 @@ async function submitOrder() {
   try {
     const priceVersion = Number(prices.value?.version);
     const pricingMode = selectedPrice.value.mode;
+    const durationMonths = pricingMode === 'fixed' ? form.durationMonths : undefined;
     const fingerprint = JSON.stringify({
       parkingLotId: parkingLot.value.id,
       priceVersion,
@@ -637,7 +642,7 @@ async function submitOrder() {
       contactPhone: normalizeContactPhone(form.contactPhone),
       address: form.address.trim(),
       plateNumber: form.plateNumber,
-      durationMonths: form.durationMonths,
+      durationMonths,
     });
     if (!clientRequestId || requestFingerprint !== fingerprint) {
       clientRequestId = createClientRequestId();
@@ -654,7 +659,7 @@ async function submitOrder() {
       contactPhone: normalizeContactPhone(form.contactPhone),
       address: form.address.trim(),
       plateNumber: form.plateNumber,
-      durationMonths: form.durationMonths,
+      durationMonths,
     });
     clientRequestId = '';
     requestFingerprint = '';

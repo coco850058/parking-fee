@@ -178,7 +178,7 @@ describe('多停车场上线回归', () => {
       for (let startup = 0; startup < 2; startup += 1) {
         const db = openDatabase(config)
         try {
-          expect(db.pragma('user_version', { simple: true })).toBe(10)
+          expect(db.pragma('user_version', { simple: true })).toBe(11)
           expect(db.prepare("SELECT COUNT(*) AS count FROM price_items WHERE mode <> 'fixed'").get())
             .toEqual({ count: 0 })
           expect(db.prepare('SELECT COUNT(*) AS n FROM parking_lots').get()).toEqual({ n: 1 })

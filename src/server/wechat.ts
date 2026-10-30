@@ -130,7 +130,7 @@ export class WechatPayClient {
     const payload = {
       appid: appId,
       mchid: mchId,
-      description: `停车费-${order.plateNumber}-${order.durationMonths}个月`,
+      description: `停车费-${order.plateNumber}-${order.durationMonths === null ? '手动金额' : `${order.durationMonths}个月`}`,
       out_trade_no: order.orderNo,
       notify_url: this.config.wechat.notifyUrl,
       // 与本地 expires_at 使用同一个绝对时间，避免两边对“待支付”状态理解不一致。
