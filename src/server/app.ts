@@ -22,7 +22,7 @@ import {
   createRefundIntent,
   expirePendingOrders,
   exportOrders,
-  findPrice,
+  findPriceItem,
   getCurrentPrices,
   getOrderByClientRequestId,
   getOrderById,
@@ -228,6 +228,7 @@ function assertIdempotentPayload(
     order.plateNumber !== input.plateNumber ||
     order.durationMonths !== input.durationMonths ||
     order.priceVersion !== input.priceVersion ||
+    order.pricingMode !== (input.pricingMode ?? 'fixed') ||
     order.amount !== input.expectedAmount
   ) {
     throw new AppError(
@@ -713,7 +714,18 @@ async function registerRoutes(context: AppContext): Promise<void> {
       if (input.priceVersion !== prices.version) {
         throw new AppError(409, 'PRICE_CHANGED', '缴费标准已更新，请确认最新金额')
       }
-      const amount = findPrice(prices, input.customerType, input.durationMonths)
+      const priceItem = findPriceItem(prices, input.customerType, input.durationMonths)
+      if (
+        (input.pricingMode && input.pricingMode !== priceItem.mode) ||
+        (priceItem.mode === 'manual' && input.pricingMode !== 'manual')
+      ) {
+        throw new AppError(409, 'PRICE_CHANGED', '缴费方式已更新，请刷新页面后重新确认金额')
+      }
+      if (priceItem.mode === 'manual' &&
+        (input.expectedAmount < 100 || input.expectedAmount % 100 !== 0)) {
+        throw new AppError(400, 'INVALID_MANUAL_AMOUNT', '请输入 1 至 100000 元的整元金额')
+      }
+      const amount = priceItem.mode === 'manual' ? input.expectedAmount : priceItem.amount
       if (input.expectedAmount !== amount) {
         throw new AppError(409, 'PRICE_CHANGED', '缴费金额已更新，请确认最新金额')
       }
@@ -732,6 +744,7 @@ async function registerRoutes(context: AppContext): Promise<void> {
         plateNumber: input.plateNumber,
         durationMonths: input.durationMonths,
         amount,
+        pricingMode: priceItem.mode,
         priceVersion: prices.version,
         priceVersionId: prices.versionId,
         paymentMode: config.paymentMode,
@@ -982,8 +995,8 @@ async function registerRoutes(context: AppContext): Promise<void> {
   app.put('/api/admin/prices', async (request) => {
     await requireAdmin(context, request)
     const { parkingLotId } = parkingLotQuerySchema.parse(request.query)
-    const { items, enabledDurations } = updatePricesSchema.parse(request.body)
-    return { data: replacePrices(db, items, 'admin', now().toISOString(), parkingLotId, enabledDurations) }
+    const { items, enabledDurations, expectedVersion } = updatePricesSchema.parse(request.body)
+    return { data: replacePrices(db, items, 'admin', now().toISOString(), parkingLotId, enabledDurations, expectedVersion) }
   })
 
   app.get('/api/admin/orders/export.csv', async (request, reply) => {

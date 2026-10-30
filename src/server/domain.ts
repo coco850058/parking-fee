@@ -3,10 +3,12 @@ import { z } from 'zod'
 export const customerTypes = ['merchant', 'resident'] as const
 export const durationOptions = [1, 3, 6, 12] as const
 export const orderStatuses = ['pending', 'paid', 'closed', 'refunded'] as const
+export const pricingModes = ['fixed', 'manual'] as const
 
 export type CustomerType = (typeof customerTypes)[number]
 export type DurationMonths = (typeof durationOptions)[number]
 export type OrderStatus = (typeof orderStatuses)[number]
+export type PricingMode = (typeof pricingModes)[number]
 export type RefundStatus = 'requesting' | 'processing' | 'success' | 'closed' | 'abnormal'
 
 export interface RefundRecord {
@@ -72,6 +74,7 @@ export const createOrderSchema = z.object({
   parkingLotId: z.string().uuid('停车场编号格式不正确').optional(),
   clientRequestId: z.string().uuid('请求标识格式不正确'),
   priceVersion: z.number().int('价格版本格式不正确').positive('价格版本格式不正确'),
+  pricingMode: z.enum(pricingModes).optional(),
   expectedAmount: z
     .number()
     .int('预期金额必须是整数分')
@@ -90,10 +93,12 @@ export const priceItemSchema = z.object({
   customerType: customerTypeSchema,
   durationMonths: durationSchema,
   amount: z.number().int('金额必须是整数分').min(0, '金额不能小于0').max(10_000_000, '金额过大'),
+  mode: z.enum(pricingModes).optional(),
 })
 
 export const updatePricesSchema = z.object({
   items: z.array(priceItemSchema).length(8, '必须提交全部8项价格'),
+  expectedVersion: z.number().int('价格版本格式不正确').positive('价格版本格式不正确').optional(),
   enabledDurations: z.array(durationSchema)
     .min(1, '请至少启用一种缴费时长')
     .refine((durations) => new Set(durations).size === durations.length, '缴费时长不能重复')
@@ -104,7 +109,10 @@ export interface PriceItem {
   customerType: CustomerType
   durationMonths: DurationMonths
   amount: number
+  mode: PricingMode
 }
+
+export type PriceItemInput = Omit<PriceItem, 'mode'> & { mode?: PricingMode }
 
 export interface PriceList {
   version: number
@@ -128,6 +136,7 @@ export interface OrderRecord {
   durationMonths: DurationMonths
   amount: number
   priceVersion: number
+  pricingMode: PricingMode
   status: OrderStatus
   paymentMode: 'mock' | 'wechat'
   transactionId: string | null

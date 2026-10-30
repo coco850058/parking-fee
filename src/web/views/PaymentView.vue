@@ -164,7 +164,7 @@
           <div class="section-head">
             <div>
               <h2 class="section-title">选择缴费时长</h2>
-              <p class="section-subtitle">金额按当前身份自动计算</p>
+              <p class="section-subtitle">固定金额自动计算，手动金额由您填写</p>
             </div>
           </div>
 
@@ -175,14 +175,15 @@
               type="button"
               class="duration-option"
               :class="{ active: form.durationMonths === months }"
-              :disabled="priceFor(months) === undefined"
+              :disabled="priceItemFor(months) === undefined"
               role="radio"
               :aria-checked="form.durationMonths === months"
               @click="form.durationMonths = months"
             >
               <b>{{ durationText[months] }}</b>
-              <span v-if="priceFor(months) !== undefined" class="amount-value">
-                ¥{{ formatMoney(priceFor(months)) }}
+              <span v-if="priceItemFor(months)?.mode === 'manual'">手动填写金额</span>
+              <span v-else-if="priceItemFor(months)" class="amount-value">
+                ¥{{ formatMoney(priceItemFor(months)?.amount) }}
               </span>
               <span v-else>暂不可选</span>
               <i v-if="form.durationMonths === months" aria-hidden="true">
@@ -191,14 +192,39 @@
             </button>
           </div>
 
+          <div v-if="selectedPrice?.mode === 'manual'" class="manual-amount-field">
+            <label for="manual-amount">本次缴费金额（元）</label>
+            <div class="manual-amount-input" :class="{ invalid: !!manualAmountError }">
+              <span aria-hidden="true">¥</span>
+              <input
+                id="manual-amount"
+                ref="manualAmountInputRef"
+                v-model.trim="manualYuan"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                maxlength="6"
+                placeholder="请输入整数金额"
+                autocomplete="off"
+                :aria-invalid="!!manualAmountError"
+                :aria-describedby="manualAmountError ? 'manual-amount-error' : 'manual-amount-hint'"
+                @focus="focusManualAmount"
+                @blur="manualInputFocused = false"
+              />
+              <span class="manual-amount-unit">元</span>
+            </div>
+            <p v-if="manualAmountError" id="manual-amount-error" class="manual-amount-hint error">{{ manualAmountError }}</p>
+            <p v-else id="manual-amount-hint" class="manual-amount-hint">请输入 1 至 100000 元的整数金额，付款前请核对。</p>
+          </div>
+
           <div class="fee-note">
             <van-icon name="shield-o" />
-            <span>应付金额由系统价格表计算，订单提交后金额不会变动</span>
+            <span>{{ selectedPrice?.mode === 'manual' ? '订单将按您填写的金额创建，提交后金额不会变动' : '应付金额由系统价格表计算，订单提交后金额不会变动' }}</span>
           </div>
         </section>
 
         <div class="pay-spacer" aria-hidden="true"></div>
-        <footer class="pay-bar safe-bottom">
+        <footer class="pay-bar safe-bottom" :class="{ 'is-keyboard-editing': manualInputFocused }">
           <div class="pay-total">
             <span>合计</span>
             <strong v-if="currentAmount !== undefined" class="amount-value">
@@ -234,6 +260,7 @@ import type {
   DurationMonths,
   ParkingLot,
   PriceConfig,
+  PriceItem,
   PublicSession,
 } from '../types';
 import {
@@ -281,6 +308,9 @@ const recent = ref<Partial<typeof form> | null>(null);
 const newEnergy = ref(false);
 const plateError = ref('');
 const plateFieldRef = ref<HTMLElement | null>(null);
+const manualAmountInputRef = ref<HTMLInputElement | null>(null);
+const manualYuan = ref('');
+const manualInputFocused = ref(false);
 let clientRequestId = '';
 let requestFingerprint = '';
 let loadSequence = 0;
@@ -292,7 +322,19 @@ const availableDurations = computed(() => {
   const configured = prices.value.enabledDurations ?? durations;
   return durations.filter((months) => configured.includes(months));
 });
-const currentAmount = computed(() => priceFor(form.durationMonths));
+const selectedPrice = computed(() => priceItemFor(form.durationMonths));
+const manualAmountError = computed(() => {
+  if (!manualYuan.value) return '';
+  return /^[1-9]\d{0,5}$/.test(manualYuan.value) && Number(manualYuan.value) <= 100000
+    ? ''
+    : '请输入 1 至 100000 元的整数金额';
+});
+const currentAmount = computed(() => {
+  if (!selectedPrice.value) return undefined;
+  if (selectedPrice.value.mode === 'fixed') return selectedPrice.value.amount;
+  if (!manualYuan.value || manualAmountError.value) return undefined;
+  return Number(manualYuan.value) * 100;
+});
 const isQrLocked = computed(() => typeof route.params.parkingLotId === 'string');
 const routeParkingLotId = computed(() => {
   if (typeof route.params.parkingLotId === 'string') return route.params.parkingLotId;
@@ -314,11 +356,17 @@ function resultQuery(extra: Record<string, string> = {}) {
   return { ...extra, ...(!isQrLocked.value ? { entry: 'direct' } : {}) };
 }
 
-function priceFor(months: DurationMonths) {
+function priceItemFor(months: DurationMonths): PriceItem | undefined {
   if (!prices.value || !availableDurations.value.includes(months)) return undefined;
-  return prices.value?.items.find(
+  const item = prices.value.items.find(
     (item) => item.customerType === form.customerType && item.durationMonths === months,
-  )?.amount || undefined;
+  );
+  return item && (item.mode === 'manual' || item.amount > 0) ? item : undefined;
+}
+
+function focusManualAmount() {
+  manualInputFocused.value = true;
+  window.setTimeout(() => manualAmountInputRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 250);
 }
 
 function recentKey() {
@@ -344,7 +392,7 @@ function restoreRecent() {
   newEnergy.value = Array.from(normalizePlate(form.plateNumber)).length === 8;
   if (
     availableDurations.value.includes(recent.value.durationMonths as DurationMonths)
-    && priceFor(recent.value.durationMonths as DurationMonths) !== undefined
+    && priceItemFor(recent.value.durationMonths as DurationMonths) !== undefined
   ) {
     form.durationMonths = recent.value.durationMonths as DurationMonths;
   }
@@ -381,6 +429,10 @@ watch(() => form.plateNumber, (value) => {
 watch(newEnergy, () => {
   plateError.value = '';
 });
+watch([() => form.customerType, () => form.durationMonths], () => {
+  manualYuan.value = '';
+  manualInputFocused.value = false;
+});
 
 function createClientRequestId() {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -396,6 +448,8 @@ async function loadInitial() {
   const sequence = ++loadSequence;
   loading.value = true;
   loadError.value = '';
+  manualYuan.value = '';
+  manualInputFocused.value = false;
   prices.value = undefined;
   parkingLot.value = undefined;
   session.value = undefined;
@@ -537,8 +591,8 @@ async function loadInitial() {
     if (sequence !== loadSequence) return;
     prices.value = priceResult;
     if (!priceResult.enabled) loadError.value = '当前缴费通道暂未开放';
-    if (priceFor(form.durationMonths) === undefined) {
-      const available = availableDurations.value.find((months) => priceFor(months) !== undefined);
+    if (priceItemFor(form.durationMonths) === undefined) {
+      const available = availableDurations.value.find((months) => priceItemFor(months) !== undefined);
       if (available) form.durationMonths = available;
       else if (priceResult.enabled) loadError.value = '当前停车场暂无可选缴费时长';
     }
@@ -561,7 +615,7 @@ async function submitOrder() {
     showFailToast(plateError.value);
     return;
   }
-  if (!parkingLot.value || !session.value || currentAmount.value === undefined) {
+  if (!parkingLot.value || !session.value || currentAmount.value === undefined || !selectedPrice.value) {
     showFailToast('缴费信息尚未准备好');
     return;
   }
@@ -574,9 +628,11 @@ async function submitOrder() {
   showLoadingToast({ message: '正在创建订单…', duration: 0, forbidClick: true });
   try {
     const priceVersion = Number(prices.value?.version);
+    const pricingMode = selectedPrice.value.mode;
     const fingerprint = JSON.stringify({
       parkingLotId: parkingLot.value.id,
       priceVersion,
+      pricingMode,
       expectedAmount: currentAmount.value,
       customerType: form.customerType,
       contactName: form.contactName.trim(),
@@ -593,6 +649,7 @@ async function submitOrder() {
       parkingLotId: parkingLot.value.id,
       clientRequestId,
       priceVersion,
+      pricingMode,
       expectedAmount: currentAmount.value,
       customerType: form.customerType,
       contactName: form.contactName.trim(),
@@ -662,6 +719,8 @@ watch([() => route.params.parkingLotId, () => route.query.parkingLotId], () => {
   form.plateNumber = '';
   formParkingLotId = '';
   form.durationMonths = 1;
+  manualYuan.value = '';
+  manualInputFocused.value = false;
   newEnergy.value = false;
   plateError.value = '';
   recent.value = null;
@@ -1076,6 +1135,74 @@ watch([() => route.params.parkingLotId, () => route.query.parkingLotId], () => {
   font-style: normal;
 }
 
+.manual-amount-field {
+  margin-top: 16px;
+  scroll-margin: 130px 0;
+}
+
+.manual-amount-field label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.manual-amount-input {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.manual-amount-input:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(0, 113, 220, 0.09);
+}
+
+.manual-amount-input.invalid {
+  border-color: #c34747;
+}
+
+.manual-amount-input > span:first-child {
+  color: var(--brand);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.manual-amount-input input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.manual-amount-unit {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.manual-amount-hint {
+  margin: 7px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.manual-amount-hint.error {
+  color: #b52626;
+}
+
 .fee-note {
   display: flex;
   align-items: flex-start;
@@ -1115,6 +1242,10 @@ watch([() => route.params.parkingLotId, () => route.query.parkingLotId], () => {
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 -8px 24px rgba(0, 45, 86, 0.07);
   backdrop-filter: blur(14px);
+}
+
+.pay-bar.is-keyboard-editing {
+  display: none;
 }
 
 .pay-total span,

@@ -12,7 +12,9 @@ import {
   type OrderRecord,
   type OrderStatus,
   type PriceItem,
+  type PriceItemInput,
   type PriceList,
+  type PricingMode,
   type RefundStatus,
 } from './domain.js'
 import { AppError } from './errors.js'
@@ -56,6 +58,7 @@ interface OrderRow {
   duration_months: DurationMonths
   amount: number
   price_version: number
+  price_snapshot_json: string
   status: OrderStatus
   payment_mode: 'mock' | 'wechat'
   wechat_transaction_id: string | null
@@ -113,6 +116,7 @@ export interface NewOrder {
   plateNumber: string
   durationMonths: DurationMonths
   amount: number
+  pricingMode: PricingMode
   priceVersion: number
   priceVersionId: number
   paymentMode: 'mock' | 'wechat'
@@ -180,6 +184,7 @@ function migrate(db: ParkingDatabase): void {
       customer_type TEXT NOT NULL CHECK (customer_type IN ('merchant', 'resident')),
       duration_months INTEGER NOT NULL CHECK (duration_months IN (1, 3, 6, 12)),
       amount INTEGER NOT NULL CHECK (amount >= 0),
+      mode TEXT NOT NULL DEFAULT 'fixed' CHECK (mode IN ('fixed', 'manual')),
       PRIMARY KEY (price_version_id, customer_type, duration_months)
     );
 
@@ -296,6 +301,10 @@ function migrate(db: ParkingDatabase): void {
   if (!priceColumns.some((column) => column.name === 'enabled_durations_json')) {
     db.exec("ALTER TABLE price_versions ADD COLUMN enabled_durations_json TEXT NOT NULL DEFAULT '[1,3,6,12]'")
   }
+  const priceItemColumns = db.prepare('PRAGMA table_info(price_items)').all() as Array<{ name: string }>
+  if (!priceItemColumns.some((column) => column.name === 'mode')) {
+    db.exec("ALTER TABLE price_items ADD COLUMN mode TEXT NOT NULL DEFAULT 'fixed' CHECK (mode IN ('fixed', 'manual'))")
+  }
   const parkingLotColumns = db.prepare('PRAGMA table_info(parking_lots)').all() as Array<{ name: string }>
   if (!parkingLotColumns.some((column) => column.name === 'plate_prefix')) {
     db.exec("ALTER TABLE parking_lots ADD COLUMN plate_prefix TEXT NOT NULL DEFAULT '新A'")
@@ -340,7 +349,7 @@ function migrate(db: ParkingDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_orders_lot_status_paid_at
       ON orders(parking_lot_id, status, paid_at DESC);
 
-    PRAGMA user_version = 9;
+    PRAGMA user_version = 10;
   `)
   })()
 }
@@ -492,7 +501,7 @@ export function getCurrentPrices(db: ParkingDatabase, parkingLotId?: string): Pr
   }
   const rows = db
     .prepare(`
-      SELECT customer_type, duration_months, amount
+      SELECT customer_type, duration_months, amount, mode
       FROM price_items
       WHERE price_version_id = ?
       ORDER BY CASE customer_type WHEN 'merchant' THEN 1 ELSE 2 END, duration_months
@@ -501,18 +510,21 @@ export function getCurrentPrices(db: ParkingDatabase, parkingLotId?: string): Pr
     customer_type: CustomerType
     duration_months: DurationMonths
     amount: number
+    mode: PricingMode
   }>
   const items = rows.map((row) => ({
     customerType: row.customer_type,
     durationMonths: row.duration_months,
     amount: row.amount,
+    mode: row.mode,
   }))
   return {
     versionId: version.id,
     version: version.version_no,
     enabled: items.length === 8 && enabledDurations.every((duration) =>
       customerTypes.every((type) => items.some((item) =>
-        item.customerType === type && item.durationMonths === duration && item.amount > 0,
+        item.customerType === type && item.durationMonths === duration &&
+        (item.mode === 'manual' || item.amount > 0),
       )),
     ),
     enabledDurations,
@@ -531,7 +543,7 @@ function normalizeEnabledDurations(value: unknown): DurationMonths[] {
   return durationOptions.filter((duration) => received.has(duration))
 }
 
-function assertCompletePriceMatrix(items: PriceItem[]): void {
+function assertCompletePriceMatrix(items: PriceItemInput[]): void {
   const received = new Set(items.map((item) => `${item.customerType}:${item.durationMonths}`))
   const expected = customerTypes.flatMap((type) =>
     durationOptions.map((duration) => `${type}:${duration}`),
@@ -543,15 +555,30 @@ function assertCompletePriceMatrix(items: PriceItem[]): void {
 
 export function replacePrices(
   db: ParkingDatabase,
-  items: PriceItem[],
+  items: PriceItemInput[],
   actor: string,
   now: string,
   parkingLotId?: string,
   enabledDurations?: DurationMonths[],
+  expectedVersion?: number,
 ): PriceList {
   const lot = parkingLotId ? getParkingLot(db, parkingLotId) : resolvePublicParkingLot(db)
   assertCompletePriceMatrix(items)
-  const selectedDurations = normalizeEnabledDurations(enabledDurations ?? getCurrentPrices(db, lot.id).enabledDurations)
+  const previous = getCurrentPrices(db, lot.id)
+  if (expectedVersion !== undefined && expectedVersion !== previous.version) {
+    throw new AppError(409, 'PRICE_CHANGED', '缴费标准已被其他管理员更新，请刷新后台后重试')
+  }
+  if (previous.items.some((item) => item.mode === 'manual') && items.some((item) => !item.mode)) {
+    throw new AppError(409, 'PRICE_CHANGED', '缴费方式已更新，请刷新后台后再保存')
+  }
+  const selectedDurations = normalizeEnabledDurations(enabledDurations ?? previous.enabledDurations)
+  // 兼容尚未更新的管理页面，但有手动价时拒绝旧页面静默覆盖配置。
+  const normalizedItems: PriceItem[] = items.map((item) => ({
+    ...item,
+    mode: item.mode ?? previous.items.find((old) =>
+      old.customerType === item.customerType && old.durationMonths === item.durationMonths,
+    )?.mode ?? 'fixed',
+  }))
   db.transaction(() => {
     const current = db.prepare('SELECT COALESCE(MAX(version_no), 0) AS version FROM price_versions').get() as {
       version: number
@@ -561,26 +588,26 @@ export function replacePrices(
       .prepare('INSERT INTO price_versions (version_no, parking_lot_id, enabled_durations_json, created_by, created_at) VALUES (?, ?, ?, ?, ?)')
       .run(nextVersion, lot.id, JSON.stringify(selectedDurations), actor, now)
     const insert = db.prepare(`
-      INSERT INTO price_items (price_version_id, customer_type, duration_months, amount)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO price_items (price_version_id, customer_type, duration_months, amount, mode)
+      VALUES (?, ?, ?, ?, ?)
     `)
-    for (const item of items) {
-      insert.run(version.lastInsertRowid, item.customerType, item.durationMonths, item.amount)
+    for (const item of normalizedItems) {
+      insert.run(version.lastInsertRowid, item.customerType, item.durationMonths, item.amount, item.mode)
     }
     db.prepare(`
       INSERT INTO audit_logs (actor, action, target_type, target_id, details_json, created_at)
       VALUES (?, 'prices.update', 'price_version', ?, ?, ?)
-    `).run(actor, String(nextVersion), JSON.stringify({ parkingLotId: lot.id, enabledDurations: selectedDurations, items }), now)
+    `).run(actor, String(nextVersion), JSON.stringify({ parkingLotId: lot.id, enabledDurations: selectedDurations, items: normalizedItems }), now)
   })()
   const { versionId: _versionId, ...prices } = getCurrentPrices(db, lot.id)
   return prices
 }
 
-export function findPrice(
+export function findPriceItem(
   prices: PriceList,
   customerType: CustomerType,
   durationMonths: DurationMonths,
-): number {
+): PriceItem {
   if (!prices.enabledDurations.includes(durationMonths)) {
     throw new AppError(409, 'DURATION_DISABLED', '该停车场暂不支持此缴费时长，请重新选择')
   }
@@ -591,10 +618,10 @@ export function findPrice(
     (candidate) =>
       candidate.customerType === customerType && candidate.durationMonths === durationMonths,
   )
-  if (!item || item.amount <= 0) {
+  if (!item || (item.mode === 'fixed' && item.amount <= 0)) {
     throw new AppError(409, 'PAYMENT_DISABLED', '该类型和时长暂未开放缴费')
   }
-  return item.amount
+  return item
 }
 
 export function insertOrder(db: ParkingDatabase, order: NewOrder): OrderRecord {
@@ -628,6 +655,7 @@ export function insertOrder(db: ParkingDatabase, order: NewOrder): OrderRecord {
       customerType: order.customerType,
       durationMonths: order.durationMonths,
       amount: order.amount,
+      mode: order.pricingMode,
     }),
     order.paymentMode,
     order.now,
@@ -652,6 +680,16 @@ export function getPrepayId(db: ParkingDatabase, orderId: string): string | null
   return row?.wechat_prepay_id ?? null
 }
 
+function pricingModeFromSnapshot(snapshotJson: string): PricingMode {
+  try {
+    const snapshot = JSON.parse(snapshotJson) as { mode?: unknown }
+    return snapshot?.mode === 'manual' ? 'manual' : 'fixed'
+  } catch {
+    // 旧订单快照没有模式字段，且旧版本只存在固定价。
+    return 'fixed'
+  }
+}
+
 function mapOrder(row: OrderRow): OrderRecord {
   return {
     id: row.id,
@@ -668,6 +706,7 @@ function mapOrder(row: OrderRow): OrderRecord {
     durationMonths: row.duration_months,
     amount: row.amount,
     priceVersion: row.price_version,
+    pricingMode: pricingModeFromSnapshot(row.price_snapshot_json),
     status: row.status,
     paymentMode: row.payment_mode,
     transactionId: row.wechat_transaction_id,

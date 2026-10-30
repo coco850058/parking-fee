@@ -106,6 +106,7 @@ export const publicApi = {
     parkingLotId: string;
     clientRequestId: string;
     priceVersion: number;
+    pricingMode: PriceItem['mode'];
     expectedAmount: number;
     customerType: string;
     contactName: string;
@@ -150,10 +151,11 @@ export const adminApi = {
     parkingLotId: string,
     items: PriceItem[],
     enabledDurations: PriceConfig['enabledDurations'],
+    expectedVersion: number,
   ) =>
     request<PriceConfig>(`/api/admin/prices${toQuery({ parkingLotId })}`, {
       method: 'PUT',
-      body: json({ items, enabledDurations }),
+      body: json({ items, enabledDurations, expectedVersion }),
     }),
   orders: (filters: OrderFilters) =>
     request<OrderListResult>(`/api/admin/orders${toQuery(filters as Record<string, unknown>)}`),

@@ -157,6 +157,7 @@ describe('微信退款与个人缴费记录', () => {
       plateNumber: '粤B12345',
       durationMonths: 1,
       amount: 100,
+      pricingMode: 'fixed',
       priceVersion: prices.version,
       priceVersionId: prices.versionId,
       paymentMode: 'wechat',

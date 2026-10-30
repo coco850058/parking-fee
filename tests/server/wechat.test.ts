@@ -174,6 +174,7 @@ describe('微信支付回调校验', () => {
       durationMonths: 1,
       amount: 8_000,
       priceVersion: 1,
+      pricingMode: 'fixed',
       status: 'pending',
       paymentMode: 'wechat',
       transactionId: null,

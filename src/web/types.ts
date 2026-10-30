@@ -3,6 +3,7 @@ export type DurationMonths = 1 | 3 | 6 | 12;
 export type OrderStatus = 'pending' | 'paid' | 'closed' | 'refunded';
 export type PaymentMode = 'mock' | 'wechat';
 export type RefundStatus = 'requesting' | 'processing' | 'success' | 'closed' | 'abnormal';
+export type PricingMode = 'fixed' | 'manual';
 
 export interface Refund {
   status: RefundStatus;
@@ -15,6 +16,7 @@ export interface PriceItem {
   customerType: CustomerType;
   durationMonths: DurationMonths;
   amount: number;
+  mode: PricingMode;
 }
 
 export interface PriceConfig {

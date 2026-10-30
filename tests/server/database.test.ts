@@ -4,9 +4,40 @@ import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import { loadConfig } from '../../src/server/config.js'
-import { getOrderById, INITIAL_PARKING_LOT_ID, INITIAL_PARKING_LOT_NAME, listParkingLots, openDatabase } from '../../src/server/database.js'
+import { getCurrentPrices, getOrderById, INITIAL_PARKING_LOT_ID, INITIAL_PARKING_LOT_NAME, listParkingLots, openDatabase, replacePrices } from '../../src/server/database.js'
 
 describe('SQLite 数据一致性', () => {
+  it('手动金额模式与固定价可跨重启保留，旧价版本仍为固定模式', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'park-fee-pricing-mode-'))
+    const databasePath = join(directory, 'parking.db')
+    const config = loadConfig({ NODE_ENV: 'test', PAYMENT_MODE: 'mock', DATABASE_PATH: databasePath })
+    try {
+      const initial = openDatabase(config)
+      const before = getCurrentPrices(initial, INITIAL_PARKING_LOT_ID)
+      const next = replacePrices(initial, before.items.map((item) =>
+        item.customerType === 'merchant' && item.durationMonths === 1
+          ? { ...item, amount: 0, mode: 'manual' }
+          : item,
+      ), 'test', '2026-10-30T00:00:00.000Z', INITIAL_PARKING_LOT_ID)
+      expect(next.enabled).toBe(true)
+      initial.close()
+
+      const reopened = openDatabase(config)
+      try {
+        expect(reopened.pragma('user_version', { simple: true })).toBe(10)
+        expect(getCurrentPrices(reopened, INITIAL_PARKING_LOT_ID).items.find((item) =>
+          item.customerType === 'merchant' && item.durationMonths === 1,
+        )).toMatchObject({ amount: 0, mode: 'manual' })
+        expect(reopened.prepare('SELECT mode FROM price_items WHERE price_version_id = 1 AND customer_type = ? AND duration_months = 1')
+          .get('merchant')).toEqual({ mode: 'fixed' })
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('将 v1 订单无损迁移并回填幂等键与两小时失效时间', () => {
     const directory = mkdtempSync(join(tmpdir(), 'park-fee-migration-'))
     const databasePath = join(directory, 'parking.db')
@@ -71,7 +102,9 @@ describe('SQLite 数据一致性', () => {
       expect(order.address).toBe('旧地址')
       expect(migrated.prepare('SELECT parking_lot_id FROM price_versions WHERE id = 1').get())
         .toEqual({ parking_lot_id: INITIAL_PARKING_LOT_ID })
-      expect(migrated.pragma('user_version', { simple: true })).toBe(9)
+      expect(migrated.pragma('user_version', { simple: true })).toBe(10)
+      expect(migrated.prepare("SELECT COUNT(*) AS count FROM price_items WHERE mode <> 'fixed'").get())
+        .toEqual({ count: 0 })
       expect(migrated.prepare('SELECT enabled_durations_json FROM price_versions WHERE id = 1').get())
         .toEqual({ enabled_durations_json: '[1,3,6,12]' })
       expect(listParkingLots(migrated)[0].platePrefix).toBe('新A')
@@ -109,7 +142,7 @@ describe('SQLite 数据一致性', () => {
           { id: INITIAL_PARKING_LOT_ID, name: INITIAL_PARKING_LOT_NAME, active: true, platePrefix: '新A' },
           { id: secondId, name: '旧备用停车场', active: false, platePrefix: '新A' },
         ])
-      expect(migrated.pragma('user_version', { simple: true })).toBe(9)
+      expect(migrated.pragma('user_version', { simple: true })).toBe(10)
     } finally {
       migrated.close()
       rmSync(directory, { recursive: true, force: true })

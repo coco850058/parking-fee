@@ -132,7 +132,7 @@
           <div class="page-intro">
             <div>
               <h2>缴费金额设置</h2>
-              <p>金额单位为元，修改后仅影响新订单</p>
+              <p>逐项选择固定金额或由缴费人手动填写；修改后仅影响新订单</p>
             </div>
             <span v-if="priceConfig">版本 {{ priceConfig.version }}</span>
           </div>
@@ -201,11 +201,23 @@
               </div>
 
               <div class="price-matrix">
-                <label v-for="months in enabledDurations" :key="months" class="price-input-card">
+                <div v-for="months in enabledDurations" :key="months" class="price-input-card">
                   <span>{{ durationText[months] }}</span>
-                  <div>
+                  <div class="price-mode-switch" role="group" :aria-label="`${customerTypeText[customerType]}${durationText[months]}金额方式`">
+                    <button
+                      v-for="mode in pricingModes"
+                      :key="mode.value"
+                      type="button"
+                      :class="{ active: priceModes[priceKey(customerType, months)] === mode.value }"
+                      :aria-pressed="priceModes[priceKey(customerType, months)] === mode.value"
+                      :disabled="savingPrices"
+                      @click="priceModes[priceKey(customerType, months)] = mode.value"
+                    >{{ mode.label }}</button>
+                  </div>
+                  <label v-if="priceModes[priceKey(customerType, months)] !== 'manual'" :for="`price-${priceKey(customerType, months)}`" class="fixed-price-input">
                     <i>¥</i>
                     <input
+                      :id="`price-${priceKey(customerType, months)}`"
                       v-model="priceInputs[priceKey(customerType, months)]"
                       type="text"
                       inputmode="decimal"
@@ -214,8 +226,9 @@
                       :aria-label="`${customerTypeText[customerType]}${durationText[months]}金额`"
                       @blur="normalizePriceInput(customerType, months)"
                     />
-                  </div>
-                </label>
+                  </label>
+                  <p v-else class="manual-price-description">由缴费人填写 1–100000 元整</p>
+                </div>
               </div>
             </section>
 
@@ -595,7 +608,7 @@ import {
   showSuccessToast,
   showToast,
 } from 'vant';
-import { adminApi, isUnauthorized } from '../api';
+import { adminApi, ApiError, isUnauthorized } from '../api';
 import type {
   AdminParkingLot,
   AdminSummary,
@@ -606,6 +619,7 @@ import type {
   OrderStatus,
   PriceConfig,
   PriceItem,
+  PricingMode,
   RefundStatus,
   SummaryPeriod,
 } from '../types';
@@ -673,6 +687,7 @@ const pricesLoading = ref(false);
 const pricesError = ref('');
 const savingPrices = ref(false);
 const priceInputs = reactive<Record<string, string>>({});
+const priceModes = reactive<Record<string, PricingMode>>({});
 const enabledDurations = ref<DurationMonths[]>([1, 3, 6, 12]);
 const orders = ref<Order[]>([]);
 const orderTotal = ref(0);
@@ -695,6 +710,10 @@ let summaryRequestId = 0;
 
 const customerTypes: CustomerType[] = ['merchant', 'resident'];
 const durations: DurationMonths[] = [1, 3, 6, 12];
+const pricingModes: Array<{ value: PricingMode; label: string }> = [
+  { value: 'fixed', label: '固定金额' },
+  { value: 'manual', label: '手动输入' },
+];
 const filters = reactive<{
   keyword: string;
   status: OrderStatus | '';
@@ -909,10 +928,13 @@ function fillPriceInputs(config: PriceConfig) {
   enabledDurations.value = durations.filter((months) => configured.includes(months));
   customerTypes.forEach((customerType) => {
     durations.forEach((months) => {
-      const amount = config.items.find(
+      const item = config.items.find(
         (item) => item.customerType === customerType && item.durationMonths === months,
-      )?.amount;
-      priceInputs[priceKey(customerType, months)] =
+      );
+      const key = priceKey(customerType, months);
+      priceModes[key] = item?.mode ?? 'fixed';
+      const amount = item?.amount;
+      priceInputs[key] =
         amount === undefined ? '' : (amount / 100).toFixed(2);
     });
   });
@@ -958,7 +980,7 @@ function normalizePriceInput(customerType: CustomerType, months: DurationMonths)
 
 async function savePrices() {
   const parkingLotId = priceParkingLotId.value;
-  if (savingPrices.value || !parkingLotId) return;
+  if (savingPrices.value || !parkingLotId || !priceConfig.value) return;
   if (enabledDurations.value.length === 0) {
     showFailToast('至少保留一个缴费时长');
     return;
@@ -966,34 +988,46 @@ async function savePrices() {
   const items: PriceItem[] = [];
   for (const customerType of customerTypes) {
     for (const durationMonths of durations) {
-      const raw = (priceInputs[priceKey(customerType, durationMonths)] ?? '').trim();
+      const key = priceKey(customerType, durationMonths);
+      const raw = (priceInputs[key] ?? '').trim();
+      const mode = priceModes[key] ?? 'fixed';
       const isEnabled = enabledDurations.value.includes(durationMonths);
       if (
-        (isEnabled || raw !== '')
-        && (!/^\d+(\.\d{1,2})?$/.test(raw) || (isEnabled && Number(raw) <= 0))
+        ((isEnabled && mode === 'fixed') || raw !== '')
+        && (!/^\d+(\.\d{1,2})?$/.test(raw) || (isEnabled && mode === 'fixed' && Number(raw) <= 0))
       ) {
         showFailToast(`${customerTypeText[customerType]}${durationText[durationMonths]}金额无效`);
         return;
       }
       const amount = raw === '' ? 0 : Math.round(Number(raw) * 100);
-      if (!Number.isSafeInteger(amount)) {
+      if (!Number.isSafeInteger(amount) || amount > 10_000_000) {
         showFailToast('金额超出允许范围');
         return;
       }
-      items.push({ customerType, durationMonths, amount });
+      items.push({ customerType, durationMonths, amount, mode });
     }
   }
 
   savingPrices.value = true;
   try {
-    const config = await adminApi.savePrices(parkingLotId, items, enabledDurations.value);
+    const config = await adminApi.savePrices(
+      parkingLotId,
+      items,
+      enabledDurations.value,
+      Number(priceConfig.value.version),
+    );
     if (parkingLotId === priceParkingLotId.value) {
       priceConfig.value = config;
       fillPriceInputs(config);
     }
     showSuccessToast('缴费标准已保存');
   } catch (error) {
-    showFailToast(handleApiError(error, '保存失败，请重试'));
+    if (error instanceof ApiError && error.code === 'PRICE_CHANGED') {
+      showFailToast('缴费标准已更新，正在重新加载，请确认后再保存');
+      await loadPrices();
+    } else {
+      showFailToast(handleApiError(error, '保存失败，请重试'));
+    }
   } finally {
     savingPrices.value = false;
   }
@@ -2021,13 +2055,13 @@ onMounted(async () => {
 
 .price-matrix {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 9px;
 }
 
 .price-input-card {
   min-width: 0;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fafafa;
@@ -2035,14 +2069,50 @@ onMounted(async () => {
 
 .price-input-card > span {
   display: block;
-  margin-bottom: 7px;
-  color: var(--muted);
-  font-size: 11px;
+  margin-bottom: 10px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
 }
 
-.price-input-card > div {
+.price-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.price-mode-switch button {
+  min-height: 36px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  background: #fff;
+  font-size: 12px;
+}
+
+.price-mode-switch button.active {
+  border-color: var(--brand);
+  color: var(--brand-dark);
+  background: var(--brand-soft);
+  font-weight: 700;
+}
+
+.fixed-price-input {
   display: flex;
+  min-height: 42px;
   align-items: center;
+  margin-top: 9px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.manual-price-description {
+  margin: 11px 1px 1px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .price-input-card i {
@@ -2065,6 +2135,10 @@ onMounted(async () => {
   font-size: 18px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.price-input-card:focus-within .fixed-price-input {
+  border-color: var(--brand);
 }
 
 .price-input-card:focus-within {
