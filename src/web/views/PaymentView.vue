@@ -164,7 +164,6 @@
           <div class="section-head">
             <div>
               <h2 class="section-title">选择缴费时长</h2>
-              <p class="section-subtitle">固定金额自动计算，手动金额由您填写</p>
             </div>
           </div>
 
@@ -207,14 +206,13 @@
                 placeholder="请输入整数金额"
                 autocomplete="off"
                 :aria-invalid="!!manualAmountError"
-                :aria-describedby="manualAmountError ? 'manual-amount-error' : 'manual-amount-hint'"
+                :aria-describedby="manualAmountError ? 'manual-amount-error' : undefined"
                 @focus="focusManualAmount"
                 @blur="manualInputFocused = false"
               />
               <span class="manual-amount-unit">元</span>
             </div>
             <p v-if="manualAmountError" id="manual-amount-error" class="manual-amount-hint error">{{ manualAmountError }}</p>
-            <p v-else id="manual-amount-hint" class="manual-amount-hint">请输入 1 至 100000 元的整数金额，付款前请核对。</p>
           </div>
 
           <div class="fee-note">
